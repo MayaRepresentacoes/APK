@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "MAYA Representações",
+    "slug": "maya-representacoes",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/images/inicial.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#001E2E"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#001E2E"
+      },
+      "package": "com.maya.representacoes",
+      "versionCode": 1
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.maya.representacoes"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/inicial.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#001E2E"
+        }
+      ],
+      "expo-build-properties",
+      "expo-location",
+      "expo-sharing"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "cd308284-0e0c-42c2-8109-56d1f08fa4a2"
+      }
+    }
+  }
+}
