@@ -6,7 +6,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Alert, StatusBar, Linking, Animated, Dimensions,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { Icon } from 'react-native-elements';
 
 export const { width: SW } = Dimensions.get('window');
 
@@ -61,7 +61,7 @@ export function FilterChip({ label, icon, active, onPress, tipo }) {
         : { backgroundColor: CARD_BG, borderColor: tc.main + '55' },
       ]}
       onPress={onPress} activeOpacity={0.85}>
-      {icon && <Icon name={icon} size={14} color={active ? DARK_BG : tc.main} />}
+      {icon && <Icon name={icon} size={14} color={active ? DARK_BG : tc.main} type="material" />}
       <Text style={[fc.text, { color: active ? DARK_BG : tc.main, marginLeft: icon ? 5 : 0 }]}>
         {label}
       </Text>
@@ -101,13 +101,13 @@ export function ClienteCard({ cliente, userLocation, onPress }) {
       <ShimmerLine color={tc.main} />
       <View style={cc.content}>
         <View style={[cc.iconWrap, { backgroundColor: tc.bg }]}>
-          <Icon name={getTipoIcon(cliente.tipo)} size={22} color={tc.main} />
+          <Icon name={getTipoIcon(cliente.tipo)} size={22} color={tc.main} type="material" />
         </View>
         <View style={cc.info}>
           <Text style={cc.nome}>{cliente.nome}</Text>
           {cliente.endereco ? (
             <View style={cc.row}>
-              <Icon name="location-on" size={11} color={SILVER_DARK} />
+              <Icon name="location-on" size={11} color={SILVER_DARK} type="material" />
               <Text style={cc.end} numberOfLines={1}>{cliente.endereco}</Text>
             </View>
           ) : null}
@@ -133,10 +133,10 @@ export function ClienteCard({ cliente, userLocation, onPress }) {
             </View>
           )}
           <TouchableOpacity style={[cc.navBtn, { backgroundColor: '#4285F4' }]} onPress={abrirMaps}>
-            <Icon name="map" size={13} color="#fff" />
+            <Icon name="map" size={13} color="#fff" type="material" />
           </TouchableOpacity>
           <TouchableOpacity style={[cc.navBtn, { backgroundColor: '#33CCFF' }]} onPress={abrirWaze}>
-            <Icon name="directions-car" size={13} color={DARK_BG} />
+            <Icon name="directions-car" size={13} color={DARK_BG} type="material" />
           </TouchableOpacity>
         </View>
       </View>
@@ -168,7 +168,7 @@ export function ListaView({ clientes, userLocation, navigation, filters, onFilte
       <StatusBar barStyle="light-content" backgroundColor={DARK_BG} />
       <View style={lv.header}>
         <View style={lv.hRow}>
-          <Icon name="map" size={22} color={GOLD} style={{ marginRight: 10 }} />
+          <Icon name="map" size={22} color={GOLD} style={{ marginRight: 10 }} type="material" />
           <View>
             <Text style={lv.title}>Mapa de Clientes</Text>
             <Text style={lv.sub}>{clientes.length} cliente(s) cadastrado(s)</Text>
@@ -198,7 +198,7 @@ export function ListaView({ clientes, userLocation, navigation, filters, onFilte
           ))
           : (
             <View style={lv.empty}>
-              <Icon name="location-off" size={52} color={GOLD + '40'} />
+              <Icon name="location-off" size={52} color={GOLD + '40'} type="material" />
               <Text style={lv.emptyT}>Nenhum cliente encontrado</Text>
               <Text style={lv.emptySub}>Adicione clientes na aba Clientes</Text>
             </View>
@@ -217,5 +217,3 @@ const lv = StyleSheet.create({
   emptyT:   { fontSize: 18, fontWeight: 'bold', color: SILVER, marginTop: 16 },
   emptySub: { fontSize: 14, color: SILVER_DARK, marginTop: 6 },
 });
-
-

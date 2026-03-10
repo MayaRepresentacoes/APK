@@ -1,17 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, Dimensions, Alert, Image, StatusBar,
-  Animated, Modal, TextInput, KeyboardAvoidingView, Platform,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  Dimensions, StatusBar, Animated, RefreshControl,
+  Modal, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
-import {
-  collection, getDocs, query, orderBy, limit,
-  where, addDoc, deleteDoc, doc,
-} from 'firebase/firestore';
+import { Icon } from 'react-native-elements';
+import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../services/firebase';
 import * as Location from 'expo-location';
-import colors from '../styles/colors';
+import { useNavigation } from '@react-navigation/native';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -23,732 +20,191 @@ const SILVER_DARK  = '#8A9BB0';
 const DARK_BG      = '#001E2E';
 const CARD_BG      = '#002840';
 const CARD_BG2     = '#003352';
-const DANGER       = '#EF5350';
+const MODAL_BG     = '#001828';
 const SUCCESS      = '#4CAF50';
+const DANGER       = '#EF5350';
 const WARN         = '#FF9800';
+const BLUE         = '#5BA3D0';
+const PURPLE       = '#C56BF0';
 
-const formatMoney = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const formatDate  = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : null;
-const diasDesde   = (d) => d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : 999;
+const TIPO_ICON  = { loja: 'store', obra: 'construction', distribuidor: 'business' };
+const TIPO_COLOR = { loja: GOLD, obra: SUCCESS, distribuidor: BLUE };
 
-// ── FORNECEDORES — chaves iguais às do Firestore (objeto fornecedores:{}) ──
-// ClientesScreen salva: { FORTLEV, AFORT, 'METAL TECK', 'TINTAS S.' }
-const FORN_META = {
-  'FORTLEV':    { color: '#29B6F6', icon: 'water',        label: 'FORTLEV'   },
-  'AFORT':      { color: '#66BB6A', icon: 'eco',          label: 'AFORT'     },
-  'METAL TECK': { color: '#90A4AE', icon: 'settings',     label: 'METAL TECK'},
-  'TINTAS S.':  { color: '#FF7043', icon: 'format-paint', label: 'TINTAS S.' },
-};
-// Retorna array de metadados apenas dos fornecedores marcados como true
-const getFornecedoresAtivos = (fornObj) => {
-  if (!fornObj || typeof fornObj !== 'object') return [];
-  return Object.entries(fornObj)
-    .filter(([, v]) => v === true)
-    .map(([k]) => FORN_META[k] || { color: SILVER_DARK, icon: 'business', label: k });
-};
-
-// ── SHIMMER LINE ─────────────────────────────────────────────
-function ShimmerLine({ color = GOLD }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.loop(Animated.timing(anim, { toValue: 1, duration: 2200, useNativeDriver: true })).start();
-  }, []);
-  return (
-    <View style={{ height: 1, width: '100%', backgroundColor: color + '25', overflow: 'hidden' }}>
-      <Animated.View style={{ position: 'absolute', height: '100%', width: 80, backgroundColor: color + 'BB', transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [-80, SW] }) }] }} />
-    </View>
-  );
-}
-
-// ── METAL CARD ────────────────────────────────────────────────
-function MetalCard({ children, style, gold = false }) {
-  const shimmer = useRef(new Animated.Value(0)).current;
-  useEffect(() => { Animated.loop(Animated.timing(shimmer, { toValue: 1, duration: 3800, useNativeDriver: true })).start(); }, []);
-  return (
-    <View style={[mc.card, gold ? mc.gold : mc.silver, style]}>
-      <Animated.View style={[mc.shimmer, { transform: [{ translateX: shimmer.interpolate({ inputRange: [0, 1], outputRange: [-150, SW] }) }] }]} />
-      {children}
-    </View>
-  );
-}
-const mc = StyleSheet.create({
-  card:    { borderRadius: 18, padding: 16, overflow: 'hidden', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 7 },
-  gold:    { backgroundColor: CARD_BG,  borderWidth: 1, borderColor: GOLD + '45',   shadowColor: GOLD   },
-  silver:  { backgroundColor: CARD_BG2, borderWidth: 1, borderColor: SILVER + '35', shadowColor: SILVER },
-  shimmer: { position: 'absolute', top: 0, width: 100, height: '100%', backgroundColor: 'rgba(255,255,255,0.035)', transform: [{ skewX: '-15deg' }] },
-});
-
-// ── ACTION BUTTON ─────────────────────────────────────────────
-function ActionButton({ title, icon, gold = false, onPress }) {
-  const accent = gold ? GOLD : SILVER;
-  return (
-    <TouchableOpacity style={[ab.btn, { borderColor: accent + '45', shadowColor: accent }]} onPress={onPress} activeOpacity={0.8}>
-      <View style={[ab.iconWrap, { backgroundColor: accent + '20' }]}><Icon name={icon} size={20} color={accent} /></View>
-      <Text style={[ab.text, { color: accent }]}>{title}</Text>
-    </TouchableOpacity>
-  );
-}
-const ab = StyleSheet.create({
-  btn:     { width: '48%', flexDirection: 'row', alignItems: 'center', backgroundColor: CARD_BG, borderRadius: 14, padding: 14, borderWidth: 1, marginBottom: 10, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.22, shadowRadius: 6, elevation: 4 },
-  iconWrap:{ width: 34, height: 34, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
-  text:    { fontSize: 12, fontWeight: '700', flex: 1 },
-});
-
-// ── SECTION HEADER ────────────────────────────────────────────
-function SectionHeader({ title, onPress, gold = true }) {
-  return (
-    <View style={sh.wrap}>
-      <View style={sh.left}>
-        <View style={[sh.bar, { backgroundColor: gold ? GOLD : SILVER }]} />
-        <Text style={sh.title}>{title}</Text>
-      </View>
-      {onPress && <TouchableOpacity onPress={onPress}><Text style={[sh.link, { color: gold ? GOLD : SILVER }]}>Ver todos →</Text></TouchableOpacity>}
-    </View>
-  );
-}
-const sh = StyleSheet.create({
-  wrap:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  left:  { flexDirection: 'row', alignItems: 'center' },
-  bar:   { width: 3, height: 20, borderRadius: 2, marginRight: 10 },
-  title: { fontSize: 15, fontWeight: 'bold', color: SILVER_LIGHT, letterSpacing: 0.3 },
-  link:  { fontSize: 12, fontWeight: '600' },
-});
-
-// ── ALERTAS ───────────────────────────────────────────────────
-function AlertasSection({ clientesRevisar, userLocation, clientes, proximasVisitas, tarefasHoje }) {
-  const alertas = [];
-  const hoje = new Date().toISOString().split('T')[0];
-
-  proximasVisitas.forEach(v => {
-    if ((v.data || '').split('T')[0] === hoje)
-      alertas.push({ icon: 'event', color: GOLD, texto: `Visita às ${v.hora || '--:--'}: ${v.titulo || v.clienteNome || 'Agendada'}` });
-  });
-
-  tarefasHoje.forEach(t => {
-    alertas.push({ icon: 'check-circle-outline', color: SILVER, texto: `Tarefa: ${t.titulo}${t.prioridade === 'alta' ? ' 🔴' : ''}` });
-  });
-
-  clientesRevisar.forEach(c => {
-    const dias = diasDesde(c.ultimaVisita);
-    if (dias >= 15 && dias < 999) alertas.push({ icon: 'schedule', color: WARN, texto: `"${c.nome}" não é visitado há ${dias} dias` });
-    else if (dias === 999)        alertas.push({ icon: 'person-off', color: DANGER, texto: `"${c.nome}" nunca foi visitado` });
-  });
-
-  if (userLocation && clientes.length > 0) {
-    const deg2rad = (d) => d * (Math.PI / 180);
-    let menor = null, menorDist = Infinity;
-    clientes.forEach(c => {
-      if (!c.latitude || !c.longitude) return;
-      const dLat = deg2rad(c.latitude - userLocation.latitude);
-      const dLon = deg2rad(c.longitude - userLocation.longitude);
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos(deg2rad(userLocation.latitude)) * Math.cos(deg2rad(c.latitude)) * Math.sin(dLon / 2) ** 2;
-      const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      if (dist < menorDist) { menorDist = dist; menor = c; }
-    });
-    if (menor && menorDist < 5)
-      alertas.push({ icon: 'near-me', color: SUCCESS, texto: `"${menor.nome}" está a ${(menorDist * 1000).toFixed(0)}m de você` });
-  }
-
-  if (alertas.length === 0) return null;
-  return (
-    <View style={al.wrap}>
-      <View style={al.titleRow}>
-        <Icon name="notifications-active" size={22} color={WARN} />
-        <Text style={al.title}>🔔 Alertas</Text>
-        <View style={al.badge}><Text style={al.badgeTxt}>{alertas.length}</Text></View>
-      </View>
-      {alertas.slice(0, 6).map((a, i) => (
-        <View key={i} style={[al.item, { borderLeftColor: a.color }]}>
-          <Icon name={a.icon} size={15} color={a.color} style={{ marginRight: 10 }} />
-          <Text style={al.texto}>{a.texto}</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
-const al = StyleSheet.create({
-  wrap:     { backgroundColor: CARD_BG2, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: WARN + '40', marginBottom: 14 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  title:    { fontSize: 18, fontWeight: 'bold', color: WARN, flex: 1, letterSpacing: 0.3 },
-  badge:    { backgroundColor: WARN + '30', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: WARN + '60' },
-  badgeTxt: { fontSize: 12, fontWeight: 'bold', color: WARN },
-  item:     { flexDirection: 'row', alignItems: 'center', borderLeftWidth: 3, paddingLeft: 12, paddingVertical: 8, marginBottom: 5, borderRadius: 4 },
-  texto:    { fontSize: 13, color: SILVER_LIGHT, flex: 1, lineHeight: 18 },
-});
-
-// ── PENDÊNCIAS ────────────────────────────────────────────────
-function PendenciasSection({ pendencias, onPress }) {
-  if (!pendencias || pendencias.length === 0) return null;
-  return (
-    <View style={pe.wrap}>
-      <Text style={pe.title}>⚠️ Pendências</Text>
-      {pendencias.map((p, i) => (
-        <TouchableOpacity key={i} style={pe.item} onPress={() => onPress(p)} activeOpacity={0.8}>
-          <View style={pe.dot} />
-          <View style={{ flex: 1 }}>
-            <Text style={pe.nome}>{p.clienteNome}</Text>
-            <Text style={pe.tipo}>{p.tipo}</Text>
-          </View>
-          <View style={[pe.badge, { backgroundColor: p.urgente ? DANGER + '25' : WARN + '20', borderColor: p.urgente ? DANGER + '60' : WARN + '50' }]}>
-            <Text style={[pe.badgeTxt, { color: p.urgente ? DANGER : WARN }]}>{p.urgente ? 'Urgente' : 'Pendente'}</Text>
-          </View>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-const pe = StyleSheet.create({
-  wrap:     { backgroundColor: DANGER + '12', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: DANGER + '35', marginBottom: 10 },
-  title:    { fontSize: 13, fontWeight: 'bold', color: DANGER, marginBottom: 8 },
-  item:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: DANGER + '20', gap: 10 },
-  dot:      { width: 8, height: 8, borderRadius: 4, backgroundColor: DANGER },
-  nome:     { fontSize: 13, fontWeight: '600', color: SILVER_LIGHT },
-  tipo:     { fontSize: 11, color: SILVER_DARK, marginTop: 1 },
-  badge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, borderWidth: 1 },
-  badgeTxt: { fontSize: 10, fontWeight: '700' },
-});
-
-// ── CHECKLIST KIT DO DIA ──────────────────────────────────────
-const KIT_ITENS = [
-  { key: 'amostras',  label: 'Amostras',         emoji: '🧴' },
-  { key: 'contratos', label: 'Contratos',        emoji: '📄' },
-  { key: 'tablet',    label: 'Tablet Carregado', emoji: '📱' },
-  { key: 'brindes',   label: 'Brindes',          emoji: '🎁' },
-  { key: 'catalogo',  label: 'Catálogo',         emoji: '📋' },
-  { key: 'cartao',    label: 'Cartão de Visita', emoji: '💼' },
+const TIPOS_DESPESA = [
+  { key: 'combustivel', label: 'Combustível',  icon: 'local-gas-station', color: WARN    },
+  { key: 'alimentacao', label: 'Alimentação',  icon: 'restaurant',        color: SUCCESS },
+  { key: 'pedagio',     label: 'Pedágio',       icon: 'toll',              color: BLUE    },
+  { key: 'outro',       label: 'Outro',          icon: 'receipt',           color: SILVER  },
 ];
-function ChecklistKit() {
-  const [marcados, setMarcados] = useState({});
-  const total   = KIT_ITENS.length;
-  const checked = Object.values(marcados).filter(Boolean).length;
-  const toggle  = (key) => setMarcados(prev => ({ ...prev, [key]: !prev[key] }));
-  return (
-    <View style={ck.wrap}>
-      <View style={ck.titleRow}>
-        <Text style={ck.title}>✅ Kit do Dia</Text>
-        <Text style={[ck.progress, { color: checked === total ? SUCCESS : GOLD }]}>{checked}/{total}</Text>
-      </View>
-      <View style={ck.progressBar}>
-        <View style={[ck.progressFill, { width: `${(checked / total) * 100}%`, backgroundColor: checked === total ? SUCCESS : GOLD }]} />
-      </View>
-      <View style={ck.grid}>
-        {KIT_ITENS.map(item => (
-          <TouchableOpacity key={item.key} style={[ck.item, marcados[item.key] && ck.itemChecked]} onPress={() => toggle(item.key)} activeOpacity={0.8}>
-            <Text style={ck.emoji}>{item.emoji}</Text>
-            <Text style={[ck.itemLabel, marcados[item.key] && { color: SUCCESS }]}>{item.label}</Text>
-            {marcados[item.key] && <Icon name="check" size={12} color={SUCCESS} />}
-          </TouchableOpacity>
-        ))}
-      </View>
-      {checked === total && (
-        <View style={ck.pronto}>
-          <Icon name="check-circle" size={16} color={SUCCESS} />
-          <Text style={ck.prontoTxt}>Tudo pronto para sair! 🚀</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-const ck = StyleSheet.create({
-  wrap:         { backgroundColor: CARD_BG, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: GOLD + '35', marginBottom: 14 },
-  titleRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  title:        { fontSize: 13, fontWeight: 'bold', color: GOLD },
-  progress:     { fontSize: 13, fontWeight: 'bold' },
-  progressBar:  { height: 4, backgroundColor: GOLD + '25', borderRadius: 2, marginBottom: 12, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 2 },
-  grid:         { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  item:         { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: CARD_BG2, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: SILVER + '25' },
-  itemChecked:  { backgroundColor: SUCCESS + '15', borderColor: SUCCESS + '50' },
-  emoji:        { fontSize: 14 },
-  itemLabel:    { fontSize: 11, color: SILVER_DARK, fontWeight: '600' },
-  pronto:       { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, justifyContent: 'center' },
-  prontoTxt:    { fontSize: 12, color: SUCCESS, fontWeight: '700' },
-});
 
-// ══════════════════════════════════════════════════════════════
-// CARD CLIENTE A VISITAR
-// FEAT 1 — fornecedores lidos do objeto {FORTLEV:true, AFORT:false…}
-// FEAT 2 — botão "Pular" (laranja) que avança a fila de próximos
-// ══════════════════════════════════════════════════════════════
-function ClienteVisitarCard({ cliente, onPress, historico, onPular, onRota, distancia }) {
-  const dias    = diasDesde(cliente.ultimaVisita);
-  const urgente = dias > 30;
-  const fadeAnim  = useRef(new Animated.Value(1)).current;
-  const slideAnim = useRef(new Animated.Value(0)).current;
-
-  const ultimaVisitaHist = historico?.find(h => h.clienteId === cliente.id);
-  let resumoVisita = null;
-  if (ultimaVisitaHist) {
-    const label = ultimaVisitaHist.statusLabel || '';
-    const data  = ultimaVisitaHist.data
-      ? formatDate(ultimaVisitaHist.data?.toDate ? ultimaVisitaHist.data.toDate() : ultimaVisitaHist.data)
-      : '';
-    resumoVisita = `📅 ${data}${label ? ': ' + label : ''}`;
-  } else if (cliente.ultimaVisita) {
-    resumoVisita = `📅 Visitado em ${formatDate(cliente.ultimaVisita)}`;
-  }
-
-  // FEAT 1: lê o objeto fornecedores:{FORTLEV:true, AFORT:false, ...}
-  const fornsAtivos = getFornecedoresAtivos(cliente.fornecedores);
-
-  // Animação de saída (usada tanto em Pular quanto em Retirar)
-  const animarSaida = (callback) => {
-    Animated.parallel([
-      Animated.timing(fadeAnim,  { toValue: 0,   duration: 260, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: -24, duration: 260, useNativeDriver: true }),
-    ]).start(() => callback && callback());
-  };
-
-  const handlePular = () => {
-    animarSaida(() => onPular && onPular(cliente));
-  };
-
-  return (
-    <Animated.View style={{ opacity: fadeAnim, transform: [{ translateX: slideAnim }] }}>
-      <TouchableOpacity
-        style={[
-          cv.card,
-          urgente && { borderColor: WARN + '60' },
-          distancia != null && distancia < 1 && { borderColor: SUCCESS + '70' },
-        ]}
-        onPress={onPress}
-        activeOpacity={0.85}
-      >
-        {/* badge distância */}
-        {distancia != null && (
-          <View style={cv.proximoBadge}>
-            <Icon name="near-me" size={11} color={SUCCESS} />
-            <Text style={cv.proximoBadgeTxt}>
-              {distancia < 1 ? `${(distancia * 1000).toFixed(0)}m de você` : `${distancia.toFixed(1)}km de você`}
-            </Text>
-          </View>
-        )}
-
-        <View style={cv.left}>
-          <View style={[cv.iconWrap, {
-            backgroundColor: distancia != null && distancia < 1 ? SUCCESS + '20' : urgente ? WARN + '20' : GOLD + '18',
-          }]}>
-            <Icon
-              name={distancia != null && distancia < 1 ? 'near-me' : 'schedule'}
-              size={18}
-              color={distancia != null && distancia < 1 ? SUCCESS : urgente ? WARN : GOLD}
-            />
-          </View>
-
-          <View style={{ flex: 1 }}>
-            {/* Nome + Status */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <Text style={cv.nome}>{cliente.nome}</Text>
-              <View style={[cv.statusDot, {
-                backgroundColor: cliente.status === 'ativo' ? SUCCESS : cliente.status === 'potencial' ? GOLD : SILVER_DARK,
-              }]} />
-              <Text style={[cv.statusTxt, {
-                color: cliente.status === 'ativo' ? SUCCESS : cliente.status === 'potencial' ? GOLD : SILVER_DARK,
-              }]}>{cliente.status}</Text>
-            </View>
-
-            {/* Data visita */}
-            <Text style={[cv.data, { color: urgente ? WARN : SILVER_DARK }]}>
-              {resumoVisita || '❌ Nunca visitado'}
-            </Text>
-
-            {/* Tags: tipo + dias + FEAT 1 fornecedores ativos */}
-            <View style={{ flexDirection: 'row', marginTop: 5, gap: 5, flexWrap: 'wrap' }}>
-              <View style={[cv.tag, { backgroundColor: SILVER + '20', borderColor: SILVER + '35' }]}>
-                <Text style={[cv.tagTxt, { color: SILVER }]}>{cliente.tipo}</Text>
-              </View>
-              {dias < 999 && (
-                <View style={[cv.tag, { backgroundColor: urgente ? WARN + '20' : CARD_BG2, borderColor: urgente ? WARN + '50' : SILVER + '30' }]}>
-                  <Text style={[cv.tagTxt, { color: urgente ? WARN : SILVER_DARK }]}>{dias}d atrás</Text>
-                </View>
-              )}
-              {/* FEAT 1: um badge por fornecedor ativo */}
-              {fornsAtivos.map((f, i) => (
-                <View key={i} style={[cv.tag, { backgroundColor: f.color + '20', borderColor: f.color + '55', flexDirection: 'row', gap: 3 }]}>
-                  <Icon name={f.icon} size={9} color={f.color} />
-                  <Text style={[cv.tagTxt, { color: f.color }]}>{f.label}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        </View>
-
-        {/* FEAT 2: botão PULAR (laranja) + ROTA (azul) */}
-        <View style={cv.actions}>
-          {onPular && (
-            <TouchableOpacity style={cv.pularBtn} onPress={handlePular} activeOpacity={0.8}>
-              <Icon name="skip-next" size={14} color={DARK_BG} />
-              <Text style={cv.pularBtnTxt}>Pular</Text>
-            </TouchableOpacity>
-          )}
-          {onRota && (
-            <TouchableOpacity style={cv.rotaBtn} onPress={() => onRota && onRota(cliente)} activeOpacity={0.8}>
-              <Icon name="directions" size={14} color="#fff" />
-              <Text style={cv.rotaBtnTxt}>Rota</Text>
-            </TouchableOpacity>
-          )}
-          <Icon name="chevron-right" size={20} color={SILVER + '55'} />
-        </View>
-      </TouchableOpacity>
-    </Animated.View>
-  );
-}
-const cv = StyleSheet.create({
-  card:            { backgroundColor: CARD_BG2, padding: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: SILVER + '20' },
-  proximoBadge:    { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: SUCCESS + '18', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 6, borderWidth: 1, borderColor: SUCCESS + '40' },
-  proximoBadgeTxt: { fontSize: 10, color: SUCCESS, fontWeight: '700' },
-  left:            { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  iconWrap:        { width: 38, height: 38, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  nome:            { fontSize: 14, fontWeight: 'bold', color: SILVER_LIGHT },
-  statusDot:       { width: 7, height: 7, borderRadius: 3.5 },
-  statusTxt:       { fontSize: 11, fontWeight: '600' },
-  data:            { fontSize: 11, marginTop: 3 },
-  tag:             { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 1, flexDirection: 'row', alignItems: 'center' },
-  tagTxt:          { fontSize: 9, fontWeight: '600' },
-  actions:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 10, gap: 8 },
-  pularBtn:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: WARN, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 6, shadowColor: WARN, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 4, elevation: 3 },
-  pularBtnTxt:     { fontSize: 11, fontWeight: 'bold', color: DARK_BG },
-  rotaBtn:         { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#2196F3', borderRadius: 10, paddingHorizontal: 11, paddingVertical: 6, shadowColor: '#2196F3', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 4, elevation: 3 },
-  rotaBtnTxt:      { fontSize: 11, fontWeight: 'bold', color: '#fff' },
-});
-
-// ── CUSTOS ────────────────────────────────────────────────────
-const CATEGORIAS = [
-  { key: 'combustivel', label: 'Combustível', icon: 'local-gas-station', color: '#FF7043' },
-  { key: 'alimentacao', label: 'Alimentação', icon: 'restaurant',        color: '#66BB6A' },
-  { key: 'hospedagem',  label: 'Hospedagem',  icon: 'hotel',             color: '#42A5F5' },
-  { key: 'outros',      label: 'Outros',      icon: 'more-horiz',        color: SILVER    },
+const ATALHOS = [
+  { label: 'Clientes',  icon: 'people',         screen: 'Clientes',     color: GOLD   },
+  { label: 'Planejar',  icon: 'calendar-today', screen: 'Planejamento', color: BLUE   },
+  { label: 'Mapa',      icon: 'map',            screen: 'Mapa',         color: SUCCESS },
+  { label: 'Rotas',     icon: 'navigation',     screen: 'Rotas',        color: WARN   },
+  { label: 'Visitas',   icon: 'bar-chart',      screen: 'Visitas',      color: PURPLE },
 ];
-const PAGAMENTOS = [
-  { key: 'credito',  label: 'Crédito',  icon: 'credit-card'  },
-  { key: 'debito',   label: 'Débito',   icon: 'payment'      },
-  { key: 'dinheiro', label: 'Dinheiro', icon: 'attach-money' },
-];
-const getCat = (k) => CATEGORIAS.find(c => c.key === k) || CATEGORIAS[3];
-const getPag = (k) => PAGAMENTOS.find(p => p.key === k)  || PAGAMENTOS[0];
 
-function CustoModal({ visible, onClose, onSave }) {
-  const [categoria, setCategoria] = useState('combustivel');
-  const [pagamento, setPagamento] = useState('dinheiro');
-  const [valor,     setValor]     = useState('');
-  const [descricao, setDescricao] = useState('');
-  const [saving,    setSaving]    = useState(false);
-  const slideAnim = useRef(new Animated.Value(600)).current;
-
-  useEffect(() => {
-    if (visible) {
-      setCategoria('combustivel'); setPagamento('dinheiro'); setValor(''); setDescricao('');
-      Animated.spring(slideAnim, { toValue: 0, friction: 8, tension: 60, useNativeDriver: true }).start();
-    } else {
-      Animated.timing(slideAnim, { toValue: 600, duration: 250, useNativeDriver: true }).start();
-    }
-  }, [visible]);
-
-  const handleSave = async () => {
-    if (!valor || parseFloat(valor.replace(',', '.')) <= 0) { Alert.alert('Atenção', 'Informe um valor válido'); return; }
-    setSaving(true);
-    try {
-      await onSave({ categoria, pagamento, valor: parseFloat(valor.replace(',', '.')), descricao: descricao || getCat(categoria).label, data: new Date().toISOString(), dataFormatada: new Date().toLocaleDateString('pt-BR') });
-      onClose();
-    } catch (e) { Alert.alert('Erro', 'Não foi possível salvar'); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        <View style={cm.overlay}>
-          <Animated.View style={[cm.sheet, { transform: [{ translateY: slideAnim }] }]}>
-            <View style={cm.header}>
-              <View style={cm.headerIcon}><Icon name="account-balance-wallet" size={20} color={DARK_BG} /></View>
-              <Text style={cm.headerTitle}>Registrar Custo</Text>
-              <TouchableOpacity style={cm.closeBtn} onPress={onClose}><Icon name="close" size={18} color={SILVER_DARK} /></TouchableOpacity>
-            </View>
-            <ShimmerLine color={GOLD} />
-            <ScrollView style={cm.body} showsVerticalScrollIndicator={false}>
-              <Text style={cm.label}>CATEGORIA</Text>
-              <View style={cm.optGrid}>
-                {CATEGORIAS.map(cat => (
-                  <TouchableOpacity key={cat.key} style={[cm.optBtn, categoria === cat.key && { backgroundColor: cat.color + '25', borderColor: cat.color + '80' }]} onPress={() => setCategoria(cat.key)}>
-                    <Icon name={cat.icon} size={20} color={categoria === cat.key ? cat.color : SILVER_DARK} />
-                    <Text style={[cm.optTxt, categoria === cat.key && { color: cat.color }]}>{cat.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={cm.label}>VALOR (R$)</Text>
-              <View style={cm.inputWrap}>
-                <Icon name="attach-money" size={18} color={GOLD} style={{ marginRight: 8 }} />
-                <TextInput style={cm.input} placeholder="0,00" placeholderTextColor={SILVER_DARK} value={valor} onChangeText={setValor} keyboardType="decimal-pad" />
-              </View>
-              <Text style={cm.label}>FORMA DE PAGAMENTO</Text>
-              <View style={cm.pagRow}>
-                {PAGAMENTOS.map(p => (
-                  <TouchableOpacity key={p.key} style={[cm.pagBtn, pagamento === p.key && { backgroundColor: GOLD + '25', borderColor: GOLD + '80' }]} onPress={() => setPagamento(p.key)}>
-                    <Icon name={p.icon} size={16} color={pagamento === p.key ? GOLD : SILVER_DARK} />
-                    <Text style={[cm.pagTxt, pagamento === p.key && { color: GOLD }]}>{p.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={cm.label}>DESCRIÇÃO {categoria === 'outros' && <Text style={{ color: DANGER }}>*</Text>}</Text>
-              <View style={cm.inputWrap}>
-                <Icon name="notes" size={16} color={SILVER_DARK} style={{ marginRight: 8 }} />
-                <TextInput style={cm.input} placeholder={categoria === 'outros' ? 'Descreva o gasto...' : 'Opcional'} placeholderTextColor={SILVER_DARK} value={descricao} onChangeText={setDescricao} />
-              </View>
-              <TouchableOpacity style={[cm.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving}>
-                <Icon name="save" size={18} color={DARK_BG} style={{ marginRight: 8 }} />
-                <Text style={cm.saveTxt}>{saving ? 'SALVANDO...' : 'REGISTRAR CUSTO'}</Text>
-              </TouchableOpacity>
-              <View style={{ height: 30 }} />
-            </ScrollView>
-          </Animated.View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-const cm = StyleSheet.create({
-  overlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
-  sheet:       { backgroundColor: '#001828', borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '90%', borderTopWidth: 1, borderColor: GOLD + '30' },
-  header:      { flexDirection: 'row', alignItems: 'center', padding: 18 },
-  headerIcon:  { width: 36, height: 36, borderRadius: 12, backgroundColor: GOLD, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  headerTitle: { flex: 1, fontSize: 18, fontWeight: 'bold', color: SILVER_LIGHT },
-  closeBtn:    { width: 34, height: 34, borderRadius: 17, backgroundColor: CARD_BG2, justifyContent: 'center', alignItems: 'center' },
-  body:        { paddingHorizontal: 20, paddingTop: 14 },
-  label:       { fontSize: 10, fontWeight: '700', color: SILVER_DARK, letterSpacing: 1, marginBottom: 8, marginTop: 14 },
-  optGrid:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
-  optBtn:      { width: '47%', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: CARD_BG, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: SILVER + '25' },
-  optTxt:      { fontSize: 12, fontWeight: '600', color: SILVER_DARK },
-  inputWrap:   { flexDirection: 'row', alignItems: 'center', backgroundColor: CARD_BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 4, borderWidth: 1, borderColor: SILVER + '25', marginBottom: 4 },
-  input:       { flex: 1, fontSize: 15, color: SILVER_LIGHT, paddingVertical: 12 },
-  pagRow:      { flexDirection: 'row', gap: 8, marginBottom: 4 },
-  pagBtn:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: CARD_BG, borderRadius: 12, paddingVertical: 10, borderWidth: 1, borderColor: SILVER + '25' },
-  pagTxt:      { fontSize: 10, fontWeight: '700', color: SILVER_DARK },
-  saveBtn:     { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: GOLD, borderRadius: 14, paddingVertical: 16, marginTop: 20, shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
-  saveTxt:     { fontSize: 15, fontWeight: 'bold', color: DARK_BG },
-});
-
-function CustosSection({ custos, onAdd, onDelete }) {
-  const totalGeral = custos.reduce((s, c) => s + c.valor, 0);
-  const totalHoje  = custos.filter(c => c.dataFormatada === new Date().toLocaleDateString('pt-BR')).reduce((s, c) => s + c.valor, 0);
-  const totaisCat  = CATEGORIAS.map(cat => ({ ...cat, total: custos.filter(c => c.categoria === cat.key).reduce((s, c) => s + c.valor, 0) }));
-  return (
-    <View>
-      <MetalCard gold style={{ marginBottom: 10 }}>
-        <View style={cst.resumoRow}>
-          <View style={cst.resumoItem}><Text style={cst.resumoLabel}>Total Geral</Text><Text style={[cst.resumoVal, { color: GOLD }]}>{formatMoney(totalGeral)}</Text></View>
-          <View style={cst.resumoDiv} />
-          <View style={cst.resumoItem}><Text style={cst.resumoLabel}>Hoje</Text><Text style={[cst.resumoVal, { color: SILVER }]}>{formatMoney(totalHoje)}</Text></View>
-          <View style={cst.resumoDiv} />
-          <View style={cst.resumoItem}><Text style={cst.resumoLabel}>Registros</Text><Text style={[cst.resumoVal, { color: GOLD }]}>{custos.length}</Text></View>
-        </View>
-      </MetalCard>
-      <View style={cst.catGrid}>
-        {totaisCat.map(cat => (
-          <View key={cat.key} style={[cst.catCard, { borderColor: cat.color + '40' }]}>
-            <View style={[cst.catIcon, { backgroundColor: cat.color + '20' }]}><Icon name={cat.icon} size={16} color={cat.color} /></View>
-            <Text style={cst.catLabel}>{cat.label}</Text>
-            <Text style={[cst.catVal, { color: cat.color }]}>{formatMoney(cat.total)}</Text>
-          </View>
-        ))}
-      </View>
-      {custos.slice(0, 5).map((c, i) => {
-        const cat = getCat(c.categoria); const pag = getPag(c.pagamento);
-        return (
-          <View key={i} style={[cst.item, { borderColor: cat.color + '35' }]}>
-            <View style={[cst.itemIcon, { backgroundColor: cat.color + '20' }]}><Icon name={cat.icon} size={18} color={cat.color} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={cst.itemDesc}>{c.descricao}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                <Icon name={pag.icon} size={10} color={SILVER_DARK} /><Text style={cst.itemPag}>{pag.label}</Text>
-                <Text style={cst.itemDot}>•</Text><Text style={cst.itemData}>{c.dataFormatada}</Text>
-              </View>
-            </View>
-            <Text style={[cst.itemVal, { color: cat.color }]}>{formatMoney(c.valor)}</Text>
-            <TouchableOpacity style={cst.delBtn} onPress={() => onDelete(c)}><Icon name="delete-outline" size={16} color={DANGER} /></TouchableOpacity>
-          </View>
-        );
-      })}
-      {custos.length === 0 && (
-        <View style={cst.empty}><Icon name="account-balance-wallet" size={36} color={GOLD + '40'} /><Text style={cst.emptyTxt}>Nenhum custo registrado</Text></View>
-      )}
-      <TouchableOpacity style={cst.addBtn} onPress={onAdd}>
-        <Icon name="add" size={18} color={DARK_BG} style={{ marginRight: 6 }} />
-        <Text style={cst.addTxt}>REGISTRAR CUSTO</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-const cst = StyleSheet.create({
-  resumoRow:   { flexDirection: 'row', paddingVertical: 4 },
-  resumoItem:  { flex: 1, alignItems: 'center' },
-  resumoDiv:   { width: 1, backgroundColor: GOLD + '30' },
-  resumoLabel: { fontSize: 9, color: SILVER_DARK, letterSpacing: 0.5, marginBottom: 4 },
-  resumoVal:   { fontSize: 14, fontWeight: 'bold' },
-  catGrid:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  catCard:     { width: '47%', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: CARD_BG, borderRadius: 12, padding: 10, borderWidth: 1 },
-  catIcon:     { width: 30, height: 30, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
-  catLabel:    { flex: 1, fontSize: 11, color: SILVER_DARK, fontWeight: '600' },
-  catVal:      { fontSize: 11, fontWeight: 'bold' },
-  item:        { flexDirection: 'row', alignItems: 'center', backgroundColor: CARD_BG, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, gap: 10 },
-  itemIcon:    { width: 36, height: 36, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
-  itemDesc:    { fontSize: 13, fontWeight: '600', color: SILVER_LIGHT },
-  itemPag:     { fontSize: 10, color: SILVER_DARK },
-  itemDot:     { fontSize: 10, color: SILVER_DARK },
-  itemData:    { fontSize: 10, color: SILVER_DARK },
-  itemVal:     { fontSize: 14, fontWeight: 'bold' },
-  delBtn:      { width: 30, height: 30, borderRadius: 9, backgroundColor: 'rgba(244,67,54,0.12)', justifyContent: 'center', alignItems: 'center' },
-  empty:       { paddingVertical: 24, alignItems: 'center' },
-  emptyTxt:    { fontSize: 12, color: SILVER_DARK, marginTop: 8 },
-  addBtn:      { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: GOLD, borderRadius: 12, paddingVertical: 13, marginTop: 4, shadowColor: GOLD, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 6, elevation: 5 },
-  addTxt:      { fontSize: 13, fontWeight: 'bold', color: DARK_BG, letterSpacing: 0.5 },
-});
-
-// ── haversine ─────────────────────────────────────────────────
-function calcDistKm(lat1, lon1, lat2, lon2) {
+function calcDist(la1, lo1, la2, lo2) {
   const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const dL = (la2 - la1) * Math.PI / 180;
+  const dO = (lo2 - lo1) * Math.PI / 180;
+  const a  = Math.sin(dL/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dO/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// ════════════════════════════════════════════════════════════
-export default function DashboardScreen({ navigation }) {
-  const [stats, setStats]                       = useState({ totalClientes: 0, clientesAtivos: 0, clientesPotenciais: 0 });
-  const [topClientes, setTopClientes]           = useState([]);
-  const [clientesRevisar, setClientesRevisar]   = useState([]);
-  const [todosClientes, setTodosClientes]       = useState([]);
-  const [pendencias, setPendencias]             = useState([]);
-  const [historicoVisitas, setHistoricoVisitas] = useState([]);
-  const [proximasVisitas, setProximasVisitas]   = useState([]);
-  const [tarefasHoje, setTarefasHoje]           = useState([]);
-  const [userLocation, setUserLocation]         = useState(null);
-  const [refreshing, setRefreshing]             = useState(false);
-  const [custos, setCustos]                     = useState([]);
-  const [modalCusto, setModalCusto]             = useState(false);
-  // FEAT 4: nome do usuário logado
-  const [nomeUsuario, setNomeUsuario]           = useState('');
-  // IDs retirados permanentemente da lista
-  const [retirados, setRetirados]               = useState([]);
-  // IDs pulados na fila de "clientes mais próximos" (voltam ao fim da fila)
-  const [pulados, setPulados]                   = useState([]);
-  // ref do ScrollView para scroll automático até Planejamento
-  const scrollRef                               = useRef(null);
-  const planejamentoY                           = useRef(0);
+// ════════════════════════════════════════════════════════════════
+export default function DashboardScreen() {
+  const navigation = useNavigation();
+
+  const [kpis,           setKpis]           = useState({ clientes: 0, visitas: 0, taxa: 0, semVisita: 0 });
+  const [recentes,       setRecentes]       = useState([]);
+  const [maisProximo,    setMaisProximo]    = useState(null);
+  const [naoVisitados,   setNaoVisitados]   = useState([]);
+  const [abaAlerta,      setAbaAlerta]      = useState('proximos');
+  const [posicao,        setPosicao]        = useState(null);
+  const [lembretes,      setLembretes]      = useState([]);
+  const [despesas,       setDespesas]       = useState([]);
+  const [totalDespesas,  setTotalDespesas]  = useState(0);
+  const [modalDespesa,   setModalDespesa]   = useState(false);
+  const [formDespesa,    setFormDespesa]    = useState({ descricao: '', valor: '', tipo: 'combustivel', data: '' });
+  const [salvandoDespesa, setSalvandoDespesa] = useState(false);
+  const [modalGPS,       setModalGPS]       = useState(false);
+  const [capturandoGPS,  setCapturandoGPS]  = useState(false);
+  const [formGPS,        setFormGPS]        = useState({
+    nome: '', cnpj: '', telefone1: '', email: '',
+    endereco: '', cidade: '', latitude: '', longitude: '',
+    tipo: 'loja', status: 'ativo', observacoes: '',
+  });
+  const [salvandoCliente, setSalvandoCliente] = useState(false);
+  const [loading,        setLoading]        = useState(true);
+  const [refreshing,     setRefreshing]     = useState(false);
+
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
-    loadDashboardData();
-    loadCustos();
-    getLocation();
-    // FEAT 4: pega displayName do Firebase Auth
-    const user = auth.currentUser;
-    if (user) {
-      const nome = user.displayName || user.email?.split('@')[0] || 'Usuário';
-      // Pega apenas o primeiro nome
-      setNomeUsuario(nome.split(' ')[0]);
-    }
+    Animated.parallel([
+      Animated.timing(fadeAnim,  { toValue: 1, duration: 500, useNativeDriver: false }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, useNativeDriver: false }),
+    ]).start();
+    obterPosicao();
+    carregarTudo();
   }, []);
 
-  const getLocation = async () => {
+  const obterPosicao = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
-      const loc = await Location.getCurrentPositionAsync({});
-      setUserLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setPosicao(loc.coords);
     } catch (e) {}
   };
 
-  const loadCustos = async () => {
+  const carregarTudo = async () => {
     try {
-      const snap = await getDocs(query(collection(db, 'custos'), orderBy('data', 'desc'), limit(50)));
-      const data = []; snap.forEach(d => data.push({ id: d.id, ...d.data() }));
-      setCustos(data);
-    } catch (e) {}
-  };
+      const [snapC, snapV] = await Promise.all([
+        getDocs(collection(db, 'clientes')),
+        getDocs(collection(db, 'visitas')),
+      ]);
 
-  const salvarCusto = async (custo) => {
-    const docRef = await addDoc(collection(db, 'custos'), custo);
-    setCustos(prev => [{ id: docRef.id, ...custo }, ...prev]);
-  };
+      const clientes = [];
+      snapC.forEach(d => clientes.push({ id: d.id, ...d.data() }));
 
-  const deletarCusto = (custo) => {
-    Alert.alert('Excluir custo', `Remover ${custo.descricao} - ${formatMoney(custo.valor)}?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Excluir', style: 'destructive', onPress: async () => {
-        try { await deleteDoc(doc(db, 'custos', custo.id)); setCustos(prev => prev.filter(c => c.id !== custo.id)); }
-        catch (e) { Alert.alert('Erro', 'Não foi possível excluir'); }
-      }},
-    ]);
-  };
+      const visitas = [];
+      snapV.forEach(d => visitas.push({ id: d.id, ...d.data() }));
+      visitas.sort((a, b) => new Date(b.dataLocal || 0) - new Date(a.dataLocal || 0));
 
-  const loadDashboardData = async () => {
-    try {
-      const clientesSnap = await getDocs(collection(db, 'clientes'));
-      let total = 0, ativos = 0, potenciais = 0, cMap = new Map(), semVisita = [], allClientes = [];
-      const hoje     = new Date();
-      const limite45 = new Date(); limite45.setDate(hoje.getDate() - 45);
+      // Despesas
+      try {
+        const snapD = await getDocs(collection(db, 'despesas'));
+        const despList = [];
+        snapD.forEach(d => despList.push({ id: d.id, ...d.data() }));
+        despList.sort((a, b) => new Date(b.criadoEm?.toDate?.() || 0) - new Date(a.criadoEm?.toDate?.() || 0));
+        const total = despList.reduce((s, d) => s + (parseFloat(d.valor) || 0), 0);
+        setDespesas(despList.slice(0, 6));
+        setTotalDespesas(total);
+      } catch (e) {}
 
-      clientesSnap.forEach(docSnap => {
-        const d = docSnap.data(); total++;
-        if (d.status === 'ativo')          ativos++;
-        else if (d.status === 'potencial') potenciais++;
-        const c = {
-          id: docSnap.id, ...d,
-          latitude:  d.latitude  ? parseFloat(d.latitude)  : null,
-          longitude: d.longitude ? parseFloat(d.longitude) : null,
-        };
-        allClientes.push(c);
-        if (d.valorTotalGasto > 0) cMap.set(docSnap.id, { id: docSnap.id, nome: d.nome, valor: d.valorTotalGasto, tipo: d.tipo });
-        if (d.dataUltimaVisita) {
-          if (new Date(d.dataUltimaVisita) < limite45)
-            semVisita.push({ id: docSnap.id, nome: d.nome, ultimaVisita: d.dataUltimaVisita, tipo: d.tipo, status: d.status, fornecedores: d.fornecedores });
-        } else if (d.status !== 'potencial') {
-          semVisita.push({ id: docSnap.id, nome: d.nome, ultimaVisita: null, tipo: d.tipo, status: d.status, fornecedores: d.fornecedores });
-        }
+      // KPIs
+      const compraram = visitas.filter(v => v.resultado === 'comprou').length;
+      const taxa = visitas.length > 0 ? Math.round((compraram / visitas.length) * 100) : 0;
+
+      const visitasPorCliente = {};
+      visitas.forEach(v => {
+        if (!visitasPorCliente[v.clienteId]) visitasPorCliente[v.clienteId] = [];
+        visitasPorCliente[v.clienteId].push(v);
       });
 
-      setTopClientes(Array.from(cMap.values()).sort((a, b) => b.valor - a.valor).slice(0, 5));
-      setClientesRevisar(semVisita.slice(0, 10));
-      setTodosClientes(allClientes);
-      setStats({ totalClientes: total, clientesAtivos: ativos, clientesPotenciais: potenciais });
-      setRetirados([]); // reset ao recarregar
-      setPulados([]);   // reset fila de pulados
+      const semVisita = clientes.filter(c => !visitasPorCliente[c.id]);
+      setNaoVisitados(semVisita.slice(0, 10));
 
-      try {
-        const pendSnap = await getDocs(query(collection(db, 'pendencias'), where('resolvida', '==', false), limit(10)));
-        const pend = []; pendSnap.forEach(d => pend.push({ id: d.id, ...d.data() }));
-        setPendencias(pend);
-      } catch (e) {}
+      // Lembretes de clientes
+      const lembretesList = clientes
+        .filter(c => c.lembrete && c.lembrete.trim())
+        .map(c => ({ id: c.id, nome: c.nome, lembrete: c.lembrete, tipo: c.tipo }))
+        .slice(0, 5);
+      setLembretes(lembretesList);
 
-      try {
-        const histSnap = await getDocs(query(collection(db, 'visitas'), orderBy('data', 'desc'), limit(30)));
-        const hist = []; histSnap.forEach(d => hist.push({ id: d.id, ...d.data() }));
-        setHistoricoVisitas(hist);
-      } catch (e) {}
+      setKpis({ clientes: clientes.length, visitas: visitas.length, taxa, semVisita: semVisita.length });
 
-      try {
-        const vs = await getDocs(query(collection(db, 'visitas'), where('data', '>=', new Date().toISOString().split('T')[0]), orderBy('data'), orderBy('hora'), limit(5)));
-        const vd = []; vs.forEach(d => vd.push({ id: d.id, ...d.data() }));
-        setProximasVisitas(vd);
-      } catch (e) {}
+      setRecentes(visitas.slice(0, 4).map(v => ({
+        ...v, clienteNome: clientes.find(c => c.id === v.clienteId)?.nome || 'Cliente',
+      })));
 
-      try {
-        const hs = new Date().toISOString().split('T')[0];
-        const ts = await getDocs(query(collection(db, 'tarefas'), where('data', '==', hs), where('concluido', '==', false), limit(5)));
-        const td = []; ts.forEach(d => td.push({ id: d.id, ...d.data() }));
-        setTarefasHoje(td);
-      } catch (e) {}
+      // Mais próximo (recalcula quando posição já disponível)
+      if (posicao) calcularMaisProximo(clientes, posicao);
 
-    } catch (e) { console.log('Erro dashboard:', e); }
+    } catch (e) { console.log('Dashboard load error:', e); }
+    finally { setLoading(false); setRefreshing(false); }
   };
 
-  const onRefresh = async () => { setRefreshing(true); await loadDashboardData(); setRefreshing(false); };
+  const calcularMaisProximo = (clientes, pos) => {
+    const comGPS = clientes.filter(c => c.latitude && c.longitude);
+    if (!comGPS.length || !pos) { setMaisProximo(null); return; }
+    const sorted = comGPS
+      .map(c => ({ ...c, dist: calcDist(pos.latitude, pos.longitude, parseFloat(c.latitude), parseFloat(c.longitude)) }))
+      .sort((a, b) => a.dist - b.dist);
+    setMaisProximo(sorted[0]);
+  };
 
-  const adicionarComLocalizacao = async () => {
+  useEffect(() => {
+    if (!posicao) return;
+    getDocs(collection(db, 'clientes')).then(snap => {
+      const clientes = [];
+      snap.forEach(d => clientes.push({ id: d.id, ...d.data() }));
+      calcularMaisProximo(clientes, posicao);
+    }).catch(() => {});
+  }, [posicao]);
+
+  const onRefresh = () => { setRefreshing(true); obterPosicao(); carregarTudo(); };
+
+  // ── Salvar despesa ────────────────────────────────────────────
+  const salvarDespesa = async () => {
+    if (!formDespesa.descricao.trim()) { Alert.alert('Erro', 'Informe a descrição'); return; }
+    if (!formDespesa.valor)            { Alert.alert('Erro', 'Informe o valor');      return; }
+    setSalvandoDespesa(true);
     try {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') { Alert.alert('Permissão negada', 'Ative a localização nas configurações.'); return; }
-      let loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      await addDoc(collection(db, 'despesas'), {
+        ...formDespesa,
+        valor:    parseFloat(formDespesa.valor.replace(',', '.')),
+        criadoEm: serverTimestamp(),
+        usuario:  auth.currentUser?.email || '',
+      });
+      setModalDespesa(false);
+      setFormDespesa({ descricao: '', valor: '', tipo: 'combustivel', data: '' });
+      carregarTudo();
+    } catch (e) { Alert.alert('Erro', 'Não foi possível salvar a despesa.'); }
+    finally { setSalvandoDespesa(false); }
+  };
+
+  // ── Cadastro rápido via GPS ────────────────────────────────────
+  const abrirModalGPS = async () => {
+    setCapturandoGPS(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') { Alert.alert('Permissão negada', 'Ative a localização.'); return; }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const { latitude, longitude } = loc.coords;
       let endereco = '';
       try {
@@ -757,314 +213,556 @@ export default function DashboardScreen({ navigation }) {
           const a = addr[0];
           endereco = [a.street, a.streetNumber, a.district || a.subregion, a.city, a.region].filter(Boolean).join(', ');
         }
-      } catch (e) { endereco = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`; }
-      navigation.navigate('Clientes', { abrirModalGPS: true, latitude: latitude.toString(), longitude: longitude.toString(), endereco });
-    } catch (e) {
-      Alert.alert('Erro', 'Não foi possível obter sua localização. Verifique se o GPS está ativo.');
-    }
+      } catch (e) {}
+      setFormGPS(f => ({ ...f, latitude: latitude.toString(), longitude: longitude.toString(), endereco }));
+      setModalGPS(true);
+    } catch (e) { Alert.alert('Erro GPS', 'Não foi possível capturar a localização.'); }
+    finally { setCapturandoGPS(false); }
   };
 
-  // ── Fila dinâmica de clientes mais próximos ──────────────────
-  // Ordena por distância; pulados vão para o fim da fila
-  const clientesComGPS = todosClientes.filter(c => c.latitude && c.longitude);
-  const clientesOrdenados = userLocation && clientesComGPS.length > 0
-    ? [...clientesComGPS]
-        .map(c => ({ cliente: c, dist: calcDistKm(userLocation.latitude, userLocation.longitude, c.latitude, c.longitude) }))
-        .sort((a, b) => {
-          const aPulado = pulados.includes(a.cliente.id);
-          const bPulado = pulados.includes(b.cliente.id);
-          if (aPulado && !bPulado) return 1;
-          if (!aPulado && bPulado) return -1;
-          return a.dist - b.dist;
-        })
-    : [];
-
-  // Pular: move cliente para o fim da fila; se todos já foram pulados → scroll até Planejamento
-  const handlePular = (cliente) => {
-    setPulados(prev => {
-      const novos = [...prev, cliente.id];
-      const filaAtual = clientesOrdenados.filter(({ cliente: c }) => !retirados.includes(c.id));
-      const todosForam = filaAtual.every(({ cliente: c }) => novos.includes(c.id));
-      if (todosForam) {
-        setTimeout(() => scrollRef.current?.scrollTo({ y: planejamentoY.current, animated: true }), 350);
-      }
-      return novos;
-    });
+  const salvarClienteGPS = async () => {
+    if (!formGPS.nome.trim()) { Alert.alert('Erro', 'Nome é obrigatório'); return; }
+    setSalvandoCliente(true);
+    try {
+      await addDoc(collection(db, 'clientes'), { ...formGPS, criadoEm: serverTimestamp(), gpsTag: true });
+      setModalGPS(false);
+      setFormGPS({ nome: '', cnpj: '', telefone1: '', email: '', endereco: '', cidade: '', latitude: '', longitude: '', tipo: 'loja', status: 'ativo', observacoes: '' });
+      Alert.alert('✅ Salvo!', 'Cliente cadastrado com GPS.');
+      carregarTudo();
+    } catch (e) { Alert.alert('Erro', 'Não foi possível salvar.'); }
+    finally { setSalvandoCliente(false); }
   };
 
-  // Retirar da lista "Clientes a Visitar" permanentemente (só na sessão)
-  const handleRetirar = (cliente) => {
-    setRetirados(prev => [...prev, cliente.id]);
-  };
-
-  // Lista "Clientes a Visitar" sem os retirados
-  const clientesVisistaFiltrados = clientesRevisar.filter(c => !retirados.includes(c.id));
-  const listaVazia = clientesVisistaFiltrados.length === 0;
-
-  // Fila dos mais próximos: exclui retirados, mostra em ordem (pulados no fim)
-  const filaProximos = clientesOrdenados.filter(({ cliente: c }) => !retirados.includes(c.id));
-  // Rótulos dinâmicos por posição
-  const medalhas = ['🥇 Mais próximo', '🥈 Segundo mais próximo', '🥉 Terceiro mais próximo'];
-  const getLabelProximo = (idx) => medalhas[idx] || `📍 ${idx + 1}º mais próximo`;
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: DARK_BG }}>
+        <ActivityIndicator size="large" color={GOLD} />
+        <Text style={{ color: SILVER, marginTop: 12, fontSize: 13 }}>Carregando...</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={{ flex: 1, backgroundColor: DARK_BG }}>
-      <StatusBar barStyle="light-content" backgroundColor={DARK_BG} translucent={false} />
+    <Animated.View style={[{ flex: 1 }, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <View style={ds.container}>
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      <ScrollView
-        ref={scrollRef}
-        style={{ flex: 1, backgroundColor: DARK_BG }}
-        contentContainerStyle={{ paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={GOLD} />}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── HEADER ── */}
-        <View style={ds.header}>
-          <View style={ds.headerLogoRow}>
-            <Image source={require('../../assets/images/logo.png')} style={ds.logo} resizeMode="contain" />
-          </View>
-          <ShimmerLine color={GOLD} />
-          <View style={ds.headerBottom}>
+        <ScrollView
+          contentContainerStyle={ds.scroll}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={GOLD} colors={[GOLD]} />}
+        >
+          {/* ══ HEADER ══ */}
+          <View style={ds.header}>
             <View>
-              {/* FEAT 4: nome do usuário */}
-              <Text style={ds.greetLabel}>
-                Olá, <Text style={{ color: GOLD }}>{nomeUsuario || 'bem-vindo'}</Text> 👋
-              </Text>
-              <Text style={ds.greetDate}>{new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</Text>
+              <Text style={ds.greeting}>Bem-vindo 👋</Text>
+              <Text style={ds.brandName}>MAYA Representações</Text>
             </View>
-            <TouchableOpacity style={ds.locBtn} onPress={adicionarComLocalizacao}>
-              <Icon name="add-location" size={16} color={DARK_BG} />
-              <Text style={ds.locBtnTxt}>GPS</Text>
+            <TouchableOpacity style={ds.gpsBtn} onPress={abrirModalGPS} disabled={capturandoGPS} activeOpacity={0.85}>
+              {capturandoGPS
+                ? <ActivityIndicator size="small" color={DARK_BG} />
+                : <Icon name="add-location-alt" size={20} color={DARK_BG} type="material" />
+              }
+              <Text style={ds.gpsBtnTxt}>{capturandoGPS ? 'GPS...' : 'Cadastrar aqui'}</Text>
             </TouchableOpacity>
           </View>
-          <View style={ds.kpiBar}>
-            {[
-              { label: 'Clientes',   value: stats.totalClientes,      gold: true  },
-              { label: 'Ativos',     value: stats.clientesAtivos,     gold: false },
-              { label: 'Potenciais', value: stats.clientesPotenciais, gold: true  },
-            ].map((k, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && <View style={ds.kpiDiv} />}
-                <View style={ds.kpiItem}>
-                  <Text style={[ds.kpiVal, { color: k.gold ? GOLD : SILVER }]}>{k.value}</Text>
-                  <Text style={ds.kpiLabel}>{k.label}</Text>
-                </View>
-              </React.Fragment>
+
+          {/* ══ KPIs ══ */}
+          <View style={ds.kpiRow}>
+            <KpiCard icon="people"      value={kpis.clientes}    label="Clientes"    color={GOLD}    />
+            <KpiCard icon="bar-chart"   value={kpis.visitas}     label="Visitas"     color={BLUE}    />
+            <KpiCard icon="trending-up" value={`${kpis.taxa}%`}  label="Conversão"   color={SUCCESS} />
+            <KpiCard icon="event-busy"  value={kpis.semVisita}   label="Sem visita"  color={DANGER}  />
+          </View>
+
+          {/* ══ ATALHOS ══ */}
+          <SectionHeader title="Acesso Rápido" icon="grid-view" />
+          <View style={ds.atalhoGrid}>
+            {ATALHOS.map(item => (
+              <ShortcutCard key={item.screen} item={item} onPress={() => navigation.navigate(item.screen)} />
             ))}
           </View>
-        </View>
 
-        {/* 1 ── ALERTAS ── */}
-        <View style={ds.section}>
-          <AlertasSection
-            clientesRevisar={clientesRevisar}
-            userLocation={userLocation}
-            clientes={todosClientes}
-            proximasVisitas={proximasVisitas}
-            tarefasHoje={tarefasHoje}
-          />
-        </View>
+          {/* ══ ALERTAS ══ */}
+          <SectionHeader title="Alertas de Campo" icon="notifications-active" iconColor={WARN} />
+          <View style={ds.alertasCard}>
+            <View style={ds.alertasAba}>
+              <TouchableOpacity style={[ds.abaBtn, abaAlerta === 'proximos' && ds.abaBtnAtivo]}
+                onPress={() => setAbaAlerta('proximos')} activeOpacity={0.8}>
+                <Icon name="my-location" size={12} color={abaAlerta === 'proximos' ? DARK_BG : SUCCESS} type="material" />
+                <Text style={[ds.abaTxt, abaAlerta === 'proximos' && ds.abaTxtAtivo]}>Mais próximo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[ds.abaBtn, abaAlerta === 'naovisitados' && ds.abaBtnAtivo]}
+                onPress={() => setAbaAlerta('naovisitados')} activeOpacity={0.8}>
+                <Icon name="event-busy" size={12} color={abaAlerta === 'naovisitados' ? DARK_BG : DANGER} type="material" />
+                <Text style={[ds.abaTxt, abaAlerta === 'naovisitados' && ds.abaTxtAtivo]}>Não visitados</Text>
+                {kpis.semVisita > 0 && (
+                  <View style={ds.abaBadge}><Text style={ds.abaBadgeTxt}>{kpis.semVisita}</Text></View>
+                )}
+              </TouchableOpacity>
+            </View>
 
-        {/* ── CLIENTES MAIS PRÓXIMOS — fila dinâmica com Pular ── */}
-        {filaProximos.length > 0 && (
-          <View style={ds.section}>
-            <SectionHeader title="📍 Clientes Mais Próximos" gold />
-            {filaProximos.slice(0, 3).map(({ cliente: c, dist }, idx) => (
-              <React.Fragment key={c.id}>
-                <Text style={[ds.proximoLabel, pulados.includes(c.id) && { color: SILVER_DARK, opacity: 0.6 }]}>
-                  {getLabelProximo(idx)}{pulados.includes(c.id) ? ' (pulado)' : ''}
-                </Text>
-                <ClienteVisitarCard
-                  cliente={c}
-                  historico={historicoVisitas}
-                  distancia={dist}
-                  onPress={() => navigation.navigate('Clientes', { screen: 'Clientes', params: { clienteId: c.id } })}
-                  onPular={handlePular}
-                  onRota={(cl) => navigation.navigate('Mapa', { clienteDestino: cl })}
-                />
-              </React.Fragment>
-            ))}
-            {filaProximos.length > 3 && (
-              <Text style={ds.maisNaFila}>+{filaProximos.length - 3} na fila</Text>
+            {abaAlerta === 'proximos' && (
+              <View style={ds.alertaContent}>
+                {!posicao ? (
+                  <View style={ds.alertaVazio}>
+                    <Icon name="location-off" size={30} color={SILVER_DARK} type="material" />
+                    <Text style={ds.alertaVazioTxt}>Aguardando GPS...</Text>
+                    <TouchableOpacity style={ds.alertaVazioBtn} onPress={obterPosicao} activeOpacity={0.8}>
+                      <Text style={ds.alertaVazioBtnTxt}>Ativar localização</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : maisProximo ? (
+                  <TouchableOpacity style={ds.proximoCard}
+                    onPress={() => navigation.navigate('Mapa', { clienteDestino: maisProximo })}
+                    activeOpacity={0.85}>
+                    <View style={[ds.proximoIconWrap, { backgroundColor: (TIPO_COLOR[maisProximo.tipo] || GOLD) + '20' }]}>
+                      <Icon name={TIPO_ICON[maisProximo.tipo] || 'location-on'} size={22} color={TIPO_COLOR[maisProximo.tipo] || GOLD} type="material" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={ds.proximoNome} numberOfLines={1}>{maisProximo.nome}</Text>
+                      <Text style={ds.proximoEnd} numberOfLines={1}>{maisProximo.endereco || maisProximo.cidade || '—'}</Text>
+                    </View>
+                    <View style={ds.proximoDistWrap}>
+                      <Text style={ds.proximoDist}>
+                        {maisProximo.dist < 1 ? `${(maisProximo.dist*1000).toFixed(0)}m` : `${maisProximo.dist.toFixed(1)}km`}
+                      </Text>
+                      <Text style={ds.proximoDistLabel}>de você</Text>
+                    </View>
+                    <Icon name="chevron-right" size={20} color={SILVER_DARK} type="material" />
+                  </TouchableOpacity>
+                ) : (
+                  <View style={ds.alertaVazio}>
+                    <Text style={ds.alertaVazioTxt}>Nenhum cliente com GPS cadastrado</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {abaAlerta === 'naovisitados' && (
+              <View style={ds.alertaContent}>
+                {naoVisitados.length === 0 ? (
+                  <View style={ds.alertaVazio}>
+                    <Icon name="check-circle" size={30} color={SUCCESS} type="material" />
+                    <Text style={ds.alertaVazioTxt}>Todos os clientes já foram visitados!</Text>
+                  </View>
+                ) : naoVisitados.map(c => (
+                  <TouchableOpacity key={c.id} style={ds.naoVisitadoItem}
+                    onPress={() => navigation.navigate('Clientes', { openCliente: c.id })}
+                    activeOpacity={0.8}>
+                    <View style={[ds.naoVisitadoIcon, { backgroundColor: (TIPO_COLOR[c.tipo] || GOLD) + '18' }]}>
+                      <Icon name={TIPO_ICON[c.tipo] || 'location-on'} size={15} color={TIPO_COLOR[c.tipo] || GOLD} type="material" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={ds.naoVisitadoNome}>{c.nome}</Text>
+                      <Text style={ds.naoVisitadoCidade}>{c.cidade || 'Sem cidade'}</Text>
+                    </View>
+                    <View style={ds.naoVisitadoBadge}>
+                      <Text style={ds.naoVisitadoBadgeTxt}>nunca visitado</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+                {kpis.semVisita > 10 && (
+                  <TouchableOpacity style={ds.verTodosBtn} onPress={() => navigation.navigate('Clientes')} activeOpacity={0.8}>
+                    <Text style={ds.verTodosTxt}>Ver todos ({kpis.semVisita}) →</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
           </View>
-        )}
 
-        {/* 2 ── PLANEJAMENTO DO DIA ── */}
-        <View
-          style={ds.section}
-          onLayout={(e) => { planejamentoY.current = e.nativeEvent.layout.y; }}
-        >
-          <SectionHeader title="Planejamento do Dia" onPress={() => navigation.navigate('Planejamento')} gold />
-          <View style={ds.planGrid}>
-            <MetalCard gold style={ds.planCard}>
-              <View style={ds.planHeader}>
-                <Icon name="event" size={16} color={GOLD} />
-                <Text style={[ds.planTitle, { color: GOLD }]}>Próximas Visitas</Text>
+          {/* ══ LEMBRETES ══ */}
+          {lembretes.length > 0 && (
+            <>
+              <SectionHeader title="Lembretes de Clientes" icon="sticky-note-2" iconColor={GOLD_LIGHT} />
+              <View style={ds.lembretesCard}>
+                {lembretes.map((l, idx) => (
+                  <TouchableOpacity key={l.id} style={[ds.lembreteItem, idx < lembretes.length - 1 && ds.lembreteBorder]}
+                    onPress={() => navigation.navigate('Clientes', { openCliente: l.id })}
+                    activeOpacity={0.8}>
+                    <View style={ds.lembreteIconWrap}>
+                      <Icon name="notifications-active" size={15} color={WARN} type="material" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={ds.lembreteNome}>{l.nome}</Text>
+                      <Text style={ds.lembreteTxt} numberOfLines={2}>{l.lembrete}</Text>
+                    </View>
+                    <Icon name="chevron-right" size={16} color={SILVER_DARK} type="material" />
+                  </TouchableOpacity>
+                ))}
               </View>
-              {proximasVisitas.length > 0 ? proximasVisitas.map((v, i) => (
-                <TouchableOpacity key={i} style={ds.planItem} onPress={() => navigation.navigate('Planejamento', { screen: 'Planejamento', params: { data: v.data } })}>
-                  <Text style={ds.planHora}>{v.hora || '--:--'}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={ds.planTitulo} numberOfLines={1}>{v.titulo}</Text>
-                    {v.clienteNome && <Text style={ds.planSub}>{v.clienteNome}</Text>}
-                  </View>
-                </TouchableOpacity>
-              )) : (
-                <View style={ds.planEmpty}><Icon name="event-available" size={26} color={GOLD + '40'} /><Text style={ds.planEmptyTxt}>Nenhuma visita</Text></View>
-              )}
-              <TouchableOpacity style={[ds.planBtn, { borderColor: GOLD + '55' }]} onPress={() => navigation.navigate('Planejamento', { screen: 'Planejamento', params: { tab: 'visita' } })}>
-                <Text style={[ds.planBtnTxt, { color: GOLD }]}>+ Nova Visita</Text>
-              </TouchableOpacity>
-            </MetalCard>
-
-            <MetalCard style={ds.planCard}>
-              <View style={ds.planHeader}>
-                <Icon name="check-circle" size={16} color={SILVER} />
-                <Text style={[ds.planTitle, { color: SILVER }]}>Tarefas do Dia</Text>
-              </View>
-              {tarefasHoje.length > 0 ? tarefasHoje.map((t, i) => (
-                <TouchableOpacity key={i} style={ds.planItem} onPress={() => navigation.navigate('Planejamento', { screen: 'Planejamento', params: { tab: 'tarefa' } })}>
-                  <View style={[ds.prioD, { backgroundColor: t.prioridade === 'alta' ? DANGER : t.prioridade === 'media' ? GOLD : SUCCESS }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={ds.planTitulo} numberOfLines={1}>{t.titulo}</Text>
-                    {t.descricao && <Text style={ds.planSub} numberOfLines={1}>{t.descricao}</Text>}
-                  </View>
-                </TouchableOpacity>
-              )) : (
-                <View style={ds.planEmpty}><Icon name="playlist-add-check" size={26} color={SILVER + '40'} /><Text style={ds.planEmptyTxt}>Nenhuma tarefa</Text></View>
-              )}
-              <TouchableOpacity style={[ds.planBtn, { borderColor: SILVER + '45' }]} onPress={() => navigation.navigate('Planejamento', { screen: 'Planejamento', params: { tab: 'tarefa' } })}>
-                <Text style={[ds.planBtnTxt, { color: SILVER }]}>+ Nova Tarefa</Text>
-              </TouchableOpacity>
-            </MetalCard>
-          </View>
-        </View>
-
-        {/* 3 ── CLIENTES A VISITAR + botão RETIRAR ── */}
-        {/* FEAT 3: só mostra a seção se houver clientes na lista */}
-        {!listaVazia && (
-          <View style={ds.section}>
-            <View style={ds.visitarHeader}>
-              <SectionHeader title="Clientes a Visitar" onPress={() => navigation.navigate('Clientes')} gold={false} />
-              <Text style={ds.visitaCount}>{clientesVisistaFiltrados.length} restantes</Text>
-            </View>
-            <PendenciasSection pendencias={pendencias} onPress={(p) => navigation.navigate('Clientes', { clienteId: p.clienteId })} />
-            {clientesVisistaFiltrados.map((c, i) => (
-              <ClienteVisitarCard
-                key={c.id + i}
-                cliente={c}
-                historico={historicoVisitas}
-                distancia={userLocation && c.latitude && c.longitude
-                  ? calcDistKm(userLocation.latitude, userLocation.longitude, c.latitude, c.longitude)
-                  : null}
-                onPress={() => navigation.navigate('Clientes', { screen: 'Clientes', params: { clienteId: c.id } })}
-                onRota={(cl) => navigation.navigate('Mapa', { clienteDestino: cl })}
-              />
-            ))}
-          </View>
-        )}
-
-        {/* FEAT 3: Preparação sobe quando lista está vazia */}
-        <View style={ds.section}>
-          <SectionHeader title="Preparação" gold />
-          {listaVazia && (
-            <View style={ds.listaVaziaCard}>
-              <Icon name="check-circle" size={22} color={SUCCESS} />
-              <Text style={ds.listaVaziaTxt}>Todos os clientes visitados! 🎉</Text>
-            </View>
+            </>
           )}
-          <ChecklistKit />
-        </View>
 
-        {/* 4 ── AÇÕES RÁPIDAS ── */}
-        <View style={ds.section}>
-          <SectionHeader title="Ações Rápidas" gold />
-          <View style={ds.actionsGrid}>
-            <ActionButton title="Novo Cliente"  icon="person-add"  gold onPress={() => navigation.navigate('Clientes')} />
-            <ActionButton title="Ver Mapa"      icon="map"         gold onPress={() => navigation.navigate('Mapa')} />
-            <ActionButton title="Planejamento"  icon="event-note"       onPress={() => navigation.navigate('Planejamento')} />
-            <ActionButton title="Otimizar Rota" icon="alt-route"        onPress={() => navigation.navigate('Rotas')} />
+          {/* ══ DESPESAS ══ */}
+          <View style={ds.sectionRow}>
+            <SectionHeader title="Despesas do Mês" icon="receipt-long" iconColor={DANGER} inline />
+            <TouchableOpacity style={ds.addDespesaBtn} onPress={() => setModalDespesa(true)} activeOpacity={0.85}>
+              <Icon name="add" size={15} color={DARK_BG} type="material" />
+              <Text style={ds.addDespesaBtnTxt}>Nova</Text>
+            </TouchableOpacity>
           </View>
-        </View>
 
-        {/* 5 ── CONTROLE DE CUSTOS ── */}
-        <View style={ds.section}>
-          <SectionHeader title="Controle de Custos" gold />
-          <CustosSection custos={custos} onAdd={() => setModalCusto(true)} onDelete={deletarCusto} />
-        </View>
-
-        {/* 6 ── CLIENTES MAIS LUCRATIVOS ── */}
-        <View style={ds.section}>
-          <SectionHeader title="Clientes Mais Lucrativos" onPress={() => navigation.navigate('Clientes')} gold />
-          {topClientes.length > 0 ? topClientes.map((c, i) => (
-            <TouchableOpacity key={i} style={ds.rankItem} onPress={() => navigation.navigate('Clientes', { screen: 'Clientes', params: { clienteId: c.id } })} activeOpacity={0.85}>
-              <View style={[ds.rankBadge, { backgroundColor: i === 0 ? GOLD : i === 1 ? SILVER : SILVER_DARK + '70' }]}>
-                <Text style={[ds.rankPos, { color: i < 2 ? DARK_BG : SILVER_LIGHT }]}>{i + 1}°</Text>
+          <View style={ds.despesasCard}>
+            <View style={ds.despesasTotalRow}>
+              <View style={ds.despesasTotalIcon}>
+                <Icon name="account-balance-wallet" size={16} color={DANGER} type="material" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={ds.rankNome}>{c.nome}</Text>
-                <Text style={ds.rankTipo}>{c.tipo}</Text>
+                <Text style={ds.despesasTotalLabel}>Total registrado</Text>
+                <Text style={ds.despesasTotalValor}>R$ {totalDespesas.toFixed(2).replace('.', ',')}</Text>
               </View>
-              <Text style={[ds.rankValor, { color: i === 0 ? GOLD : SILVER }]}>{formatMoney(c.valor)}</Text>
-            </TouchableOpacity>
-          )) : (
-            <MetalCard gold><View style={ds.emptyWrap}>
-              <Icon name="bar-chart" size={30} color={GOLD + '50'} />
-              <Text style={ds.emptyTxt}>Nenhum dado disponível</Text>
-            </View></MetalCard>
+              <Text style={ds.despesasTotalQtd}>{despesas.length} registro{despesas.length !== 1 ? 's' : ''}</Text>
+            </View>
+
+            {despesas.length === 0 ? (
+              <View style={ds.despesasVazio}>
+                <Icon name="receipt" size={26} color={SILVER_DARK} type="material" />
+                <Text style={ds.despesasVazioTxt}>Nenhuma despesa registrada</Text>
+              </View>
+            ) : despesas.map(d => {
+              const ti = TIPOS_DESPESA.find(t => t.key === d.tipo) || TIPOS_DESPESA[3];
+              return (
+                <View key={d.id} style={ds.despesaItem}>
+                  <View style={[ds.despesaIconWrap, { backgroundColor: ti.color + '20' }]}>
+                    <Icon name={ti.icon} size={15} color={ti.color} type="material" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={ds.despesaDescricao}>{d.descricao}</Text>
+                    <Text style={ds.despesaTipo}>{ti.label}{d.data ? ` · ${d.data}` : ''}</Text>
+                  </View>
+                  <Text style={ds.despesaValor}>- R$ {parseFloat(d.valor || 0).toFixed(2).replace('.', ',')}</Text>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* ══ VISITAS RECENTES ══ */}
+          {recentes.length > 0 && (
+            <>
+              <View style={ds.sectionRow}>
+                <SectionHeader title="Últimas Visitas" icon="history" inline />
+                <TouchableOpacity onPress={() => navigation.navigate('Visitas')} activeOpacity={0.8} style={{ paddingRight: 16 }}>
+                  <Text style={ds.verTodosTxt}>Ver tudo →</Text>
+                </TouchableOpacity>
+              </View>
+              {recentes.map(v => (
+                <View key={v.id} style={ds.visitaItem}>
+                  <View style={[ds.visitaIconWrap, { backgroundColor: v.resultado === 'comprou' ? SUCCESS + '20' : DANGER + '20' }]}>
+                    <Icon name={v.resultado === 'comprou' ? 'check-circle' : 'cancel'} size={15}
+                      color={v.resultado === 'comprou' ? SUCCESS : DANGER} type="material" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={ds.visitaNome}>{v.clienteNome}</Text>
+                    <Text style={ds.visitaData}>{v.dataLocal ? new Date(v.dataLocal).toLocaleDateString('pt-BR') : '—'}</Text>
+                  </View>
+                  <View style={[ds.visitaBadge, { backgroundColor: v.resultado === 'comprou' ? SUCCESS + '18' : DANGER + '15', borderColor: v.resultado === 'comprou' ? SUCCESS + '40' : DANGER + '35' }]}>
+                    <Text style={[ds.visitaBadgeTxt, { color: v.resultado === 'comprou' ? SUCCESS : DANGER }]}>
+                      {v.resultado === 'comprou' ? 'Comprou' : 'Não comprou'}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </>
           )}
-        </View>
 
-      </ScrollView>
+          <View style={{ height: 100 }} />
+        </ScrollView>
 
-      <CustoModal visible={modalCusto} onClose={() => setModalCusto(false)} onSave={salvarCusto} />
-    </View>
+        {/* ══ MODAL NOVA DESPESA ══ */}
+        <Modal visible={modalDespesa} transparent animationType="slide" onRequestClose={() => setModalDespesa(false)}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <TouchableOpacity style={ds.modalOverlay} onPress={() => setModalDespesa(false)} activeOpacity={1} />
+            <View style={ds.modalSheet}>
+              <View style={ds.modalHandle} />
+              <Text style={ds.modalTitle}>💰 Nova Despesa</Text>
+
+              <Text style={ds.formLabel}>Tipo</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+                {TIPOS_DESPESA.map(t => (
+                  <TouchableOpacity key={t.key}
+                    style={[ds.tipoChip, formDespesa.tipo === t.key && { backgroundColor: t.color, borderColor: t.color }]}
+                    onPress={() => setFormDespesa(f => ({ ...f, tipo: t.key }))} activeOpacity={0.8}>
+                    <Icon name={t.icon} size={13} color={formDespesa.tipo === t.key ? DARK_BG : t.color} type="material" />
+                    <Text style={[ds.tipoChipTxt, formDespesa.tipo === t.key && { color: DARK_BG }]}>{t.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <Text style={ds.formLabel}>Descrição</Text>
+              <View style={ds.inputWrap}>
+                <TextInput style={ds.input} placeholder="Ex: Gasolina posto BR" placeholderTextColor={SILVER_DARK}
+                  value={formDespesa.descricao} onChangeText={t => setFormDespesa(f => ({ ...f, descricao: t }))} />
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={ds.formLabel}>Valor (R$)</Text>
+                  <View style={ds.inputWrap}>
+                    <TextInput style={ds.input} placeholder="0,00" placeholderTextColor={SILVER_DARK}
+                      value={formDespesa.valor} onChangeText={t => setFormDespesa(f => ({ ...f, valor: t }))}
+                      keyboardType="numeric" />
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={ds.formLabel}>Data</Text>
+                  <View style={ds.inputWrap}>
+                    <TextInput style={ds.input} placeholder="dd/mm/aaaa" placeholderTextColor={SILVER_DARK}
+                      value={formDespesa.data} onChangeText={t => setFormDespesa(f => ({ ...f, data: t }))}
+                      keyboardType="numeric" />
+                  </View>
+                </View>
+              </View>
+
+              <TouchableOpacity style={[ds.saveBtn, salvandoDespesa && { opacity: 0.7 }]}
+                onPress={salvarDespesa} disabled={salvandoDespesa} activeOpacity={0.85}>
+                <Icon name="save" size={17} color={DARK_BG} type="material" style={{ marginRight: 8 }} />
+                <Text style={ds.saveBtnTxt}>{salvandoDespesa ? 'Salvando...' : 'REGISTRAR DESPESA'}</Text>
+              </TouchableOpacity>
+              <View style={{ height: 24 }} />
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* ══ MODAL CADASTRO GPS ══ */}
+        <Modal visible={modalGPS} transparent animationType="slide" onRequestClose={() => setModalGPS(false)}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={ds.modalGPSOverlay}>
+              <View style={[ds.modalSheet, { maxHeight: '88%' }]}>
+                <View style={ds.modalHandle} />
+                <View style={ds.gpsBanner}>
+                  <Icon name="my-location" size={15} color={SUCCESS} type="material" />
+                  <Text style={ds.gpsBannerTxt}>📍 GPS capturado</Text>
+                  {formGPS.latitude ? (
+                    <Text style={ds.gpsCoordsSmall}>
+                      {parseFloat(formGPS.latitude).toFixed(4)}, {parseFloat(formGPS.longitude).toFixed(4)}
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={ds.modalTitle}>Cadastrar Cliente Aqui</Text>
+
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <Text style={ds.formLabel}>Nome *</Text>
+                  <View style={ds.inputWrap}>
+                    <TextInput style={ds.input} placeholder="Nome do cliente" placeholderTextColor={SILVER_DARK}
+                      value={formGPS.nome} onChangeText={t => setFormGPS(f => ({ ...f, nome: t }))} />
+                  </View>
+
+                  <Text style={ds.formLabel}>Telefone</Text>
+                  <View style={ds.inputWrap}>
+                    <TextInput style={ds.input} placeholder="(00) 00000-0000" placeholderTextColor={SILVER_DARK}
+                      value={formGPS.telefone1} onChangeText={t => setFormGPS(f => ({ ...f, telefone1: t }))}
+                      keyboardType="phone-pad" />
+                  </View>
+
+                  <Text style={ds.formLabel}>Endereço (do GPS)</Text>
+                  <View style={ds.inputWrap}>
+                    <TextInput style={ds.input} placeholder="Endereço" placeholderTextColor={SILVER_DARK}
+                      value={formGPS.endereco} onChangeText={t => setFormGPS(f => ({ ...f, endereco: t }))} />
+                  </View>
+
+                  <Text style={ds.formLabel}>Cidade</Text>
+                  <View style={ds.inputWrap}>
+                    <TextInput style={ds.input} placeholder="Cidade" placeholderTextColor={SILVER_DARK}
+                      value={formGPS.cidade} onChangeText={t => setFormGPS(f => ({ ...f, cidade: t }))} />
+                  </View>
+
+                  <Text style={ds.formLabel}>Tipo</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {['loja', 'obra', 'distribuidor'].map(t => (
+                      <TouchableOpacity key={t}
+                        style={[ds.tipoChip, formGPS.tipo === t && { backgroundColor: TIPO_COLOR[t] || GOLD, borderColor: TIPO_COLOR[t] || GOLD }]}
+                        onPress={() => setFormGPS(f => ({ ...f, tipo: t }))} activeOpacity={0.8}>
+                        <Text style={[ds.tipoChipTxt, formGPS.tipo === t && { color: DARK_BG }]}>{t}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={ds.formLabel}>Observações</Text>
+                  <View style={[ds.inputWrap, { alignItems: 'flex-start', paddingTop: 10 }]}>
+                    <TextInput style={[ds.input, { height: 60, textAlignVertical: 'top' }]}
+                      placeholder="Anotações..." placeholderTextColor={SILVER_DARK}
+                      value={formGPS.observacoes} onChangeText={t => setFormGPS(f => ({ ...f, observacoes: t }))}
+                      multiline numberOfLines={3} />
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                    <TouchableOpacity style={ds.cancelBtn} onPress={() => setModalGPS(false)} activeOpacity={0.8}>
+                      <Text style={ds.cancelBtnTxt}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[ds.saveBtn, { flex: 1 }, salvandoCliente && { opacity: 0.7 }]}
+                      onPress={salvarClienteGPS} disabled={salvandoCliente} activeOpacity={0.85}>
+                      <Icon name="person-add" size={16} color={DARK_BG} type="material" style={{ marginRight: 6 }} />
+                      <Text style={ds.saveBtnTxt}>{salvandoCliente ? 'Salvando...' : 'CADASTRAR'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ height: 30 }} />
+                </ScrollView>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      </View>
+    </Animated.View>
   );
 }
 
-const ds = StyleSheet.create({
-  header:         { backgroundColor: '#001828', paddingBottom: 16, paddingHorizontal: 20, paddingTop: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, shadowColor: GOLD, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 },
-  headerLogoRow:  { alignItems: 'center', paddingBottom: 12 },
-  logo:           { width: 160, height: 46 },
-  headerBottom:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
-  greetLabel:     { fontSize: 15, color: SILVER_LIGHT, fontWeight: '600' },
-  greetDate:      { fontSize: 10, color: SILVER_DARK, marginTop: 2, textTransform: 'capitalize' },
-  locBtn:         { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: GOLD, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, shadowColor: GOLD, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.5, shadowRadius: 6, elevation: 5 },
-  locBtnTxt:      { fontSize: 11, fontWeight: 'bold', color: DARK_BG },
-  kpiBar:         { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 14, paddingVertical: 12, borderWidth: 1, borderColor: GOLD + '20' },
-  kpiItem:        { flex: 1, alignItems: 'center' },
-  kpiVal:         { fontSize: 14, fontWeight: 'bold' },
-  kpiLabel:       { fontSize: 9, color: SILVER_DARK, marginTop: 2, letterSpacing: 0.5 },
-  kpiDiv:         { width: 1, backgroundColor: SILVER + '20' },
-  section:        { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 2 },
-  proximoLabel:   { fontSize: 11, color: SILVER_DARK, fontWeight: '600', marginBottom: 4, marginLeft: 2 },
-  maisNaFila:     { fontSize: 11, color: SILVER_DARK, textAlign: 'center', paddingVertical: 6, fontStyle: 'italic' },
-  visitarHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  visitaCount:    { fontSize: 12, color: SILVER_DARK, fontWeight: '600', marginBottom: 12 },
-  listaVaziaCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: SUCCESS + '15', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: SUCCESS + '40', marginBottom: 10 },
-  listaVaziaTxt:  { fontSize: 13, color: SUCCESS, fontWeight: '600' },
-  planGrid:       { flexDirection: 'row', justifyContent: 'space-between' },
-  planCard:       { width: '48.5%' },
-  planHeader:     { flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' },
-  planTitle:      { fontSize: 12, fontWeight: 'bold', marginLeft: 6 },
-  planItem:       { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
-  planHora:       { fontSize: 11, fontWeight: 'bold', color: GOLD, width: 40 },
-  prioD:          { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
-  planTitulo:     { fontSize: 11, fontWeight: '600', color: SILVER_LIGHT },
-  planSub:        { fontSize: 10, color: SILVER_DARK, marginTop: 1 },
-  planEmpty:      { paddingVertical: 16, alignItems: 'center' },
-  planEmptyTxt:   { fontSize: 10, color: SILVER_DARK, marginTop: 4 },
-  planBtn:        { marginTop: 10, paddingVertical: 7, alignItems: 'center', borderRadius: 8, borderWidth: 1 },
-  planBtnTxt:     { fontSize: 11, fontWeight: '600' },
-  rankItem:       { flexDirection: 'row', alignItems: 'center', backgroundColor: CARD_BG, padding: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: GOLD + '25', shadowColor: GOLD, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.13, shadowRadius: 6, elevation: 3 },
-  rankBadge:      { width: 34, height: 34, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  rankPos:        { fontWeight: 'bold', fontSize: 13 },
-  rankNome:       { fontSize: 14, fontWeight: 'bold', color: SILVER_LIGHT },
-  rankTipo:       { fontSize: 11, color: SILVER_DARK, marginTop: 1 },
-  rankValor:      { fontSize: 14, fontWeight: 'bold' },
-  actionsGrid:    { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  emptyWrap:      { alignItems: 'center', paddingVertical: 16 },
-  emptyTxt:       { fontSize: 13, color: SILVER_DARK, marginTop: 8 },
+// ── Sub-componentes ───────────────────────────────────────────
+function KpiCard({ icon, value, label, color }) {
+  return (
+    <View style={[kc.card, { borderColor: color + '25' }]}>
+      <View style={[kc.icon, { backgroundColor: color + '18' }]}>
+        <Icon name={icon} size={14} color={color} type="material" />
+      </View>
+      <Text style={[kc.value, { color }]}>{value}</Text>
+      <Text style={kc.label}>{label}</Text>
+    </View>
+  );
+}
+const kc = StyleSheet.create({
+  card:  { flex: 1, alignItems: 'center', backgroundColor: CARD_BG, borderRadius: 14, padding: 9, borderWidth: 1, marginHorizontal: 3 },
+  icon:  { width: 28, height: 28, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginBottom: 5 },
+  value: { fontSize: 17, fontWeight: 'bold' },
+  label: { fontSize: 8, color: SILVER_DARK, marginTop: 1, textAlign: 'center' },
 });
 
+function SectionHeader({ title, icon, iconColor = GOLD, inline = false }) {
+  return (
+    <View style={[sh2.row, inline && { flex: 1 }]}>
+      <View style={[sh2.iconWrap, { backgroundColor: iconColor + '20' }]}>
+        <Icon name={icon} size={13} color={iconColor} type="material" />
+      </View>
+      <Text style={sh2.title}>{title}</Text>
+    </View>
+  );
+}
+const sh2 = StyleSheet.create({
+  row:     { flexDirection: 'row', alignItems: 'center', marginTop: 20, marginBottom: 10, paddingHorizontal: 14 },
+  iconWrap:{ width: 24, height: 24, borderRadius: 7, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+  title:   { fontSize: 13, fontWeight: 'bold', color: SILVER_LIGHT, letterSpacing: 0.3 },
+});
+
+function ShortcutCard({ item, onPress }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const press = () => {
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 0.93, duration: 70, useNativeDriver: false }),
+      Animated.timing(scale, { toValue: 1,    duration: 70, useNativeDriver: false }),
+    ]).start(() => onPress());
+  };
+  return (
+    <Animated.View style={{ transform: [{ scale }], width: (SW - 44) / 2 - 4 }}>
+      <TouchableOpacity style={[sc.card, { borderColor: item.color + '30' }]} onPress={press} activeOpacity={1}>
+        <View style={[sc.iconWrap, { backgroundColor: item.color + '18' }]}>
+          <Icon name={item.icon} size={22} color={item.color} type="material" />
+        </View>
+        <Text style={[sc.label, { color: item.color }]}>{item.label}</Text>
+        <View style={[sc.arrow, { backgroundColor: item.color + '20' }]}>
+          <Icon name="arrow-forward" size={10} color={item.color} type="material" />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+const sc = StyleSheet.create({
+  card:    { backgroundColor: CARD_BG, borderRadius: 16, padding: 14, borderWidth: 1, minHeight: 86 },
+  iconWrap:{ width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  label:   { fontSize: 13, fontWeight: 'bold' },
+  arrow:   { position: 'absolute', top: 10, right: 10, width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+});
+
+// ── Estilos principais ────────────────────────────────────────
+const ds = StyleSheet.create({
+  container:      { flex: 1, backgroundColor: DARK_BG },
+  scroll:         { paddingTop: 54, paddingBottom: 40 },
+
+  header:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginBottom: 16 },
+  greeting:       { fontSize: 11, color: SILVER_DARK },
+  brandName:      { fontSize: 20, fontWeight: 'bold', color: GOLD },
+  gpsBtn:         { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: GOLD, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 13, shadowColor: GOLD, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.5, shadowRadius: 8, elevation: 6 },
+  gpsBtnTxt:      { fontSize: 11, fontWeight: 'bold', color: DARK_BG },
+
+  kpiRow:         { flexDirection: 'row', paddingHorizontal: 12, marginBottom: 4 },
+  atalhoGrid:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 13, marginBottom: 4 },
+  sectionRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 14 },
+
+  alertasCard:    { marginHorizontal: 14, backgroundColor: CARD_BG, borderRadius: 18, borderWidth: 1, borderColor: WARN + '20', overflow: 'hidden', marginBottom: 4 },
+  alertasAba:     { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: WARN + '15' },
+  abaBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 12 },
+  abaBtnAtivo:    { backgroundColor: GOLD },
+  abaTxt:         { fontSize: 11, fontWeight: '700', color: SILVER },
+  abaTxtAtivo:    { color: DARK_BG },
+  abaBadge:       { backgroundColor: DANGER, borderRadius: 7, paddingHorizontal: 5, paddingVertical: 1, marginLeft: 2 },
+  abaBadgeTxt:    { fontSize: 9, fontWeight: 'bold', color: '#fff' },
+  alertaContent:  { padding: 12 },
+  alertaVazio:    { alignItems: 'center', paddingVertical: 18, gap: 8 },
+  alertaVazioTxt: { fontSize: 12, color: SILVER_DARK, textAlign: 'center' },
+  alertaVazioBtn: { backgroundColor: GOLD + '20', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10, borderWidth: 1, borderColor: GOLD + '30' },
+  alertaVazioBtnTxt: { fontSize: 11, color: GOLD, fontWeight: '700' },
+
+  proximoCard:    { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: CARD_BG2, borderRadius: 13, padding: 13, borderWidth: 1, borderColor: SUCCESS + '25' },
+  proximoIconWrap:{ width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  proximoNome:    { fontSize: 13, fontWeight: 'bold', color: SILVER_LIGHT },
+  proximoEnd:     { fontSize: 10, color: SILVER_DARK, marginTop: 2 },
+  proximoDistWrap:{ alignItems: 'center', minWidth: 50 },
+  proximoDist:    { fontSize: 15, fontWeight: 'bold', color: SUCCESS },
+  proximoDistLabel:{ fontSize: 8, color: SILVER_DARK },
+
+  naoVisitadoItem:{ flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: SILVER + '10' },
+  naoVisitadoIcon:{ width: 32, height: 32, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+  naoVisitadoNome:{ fontSize: 12, fontWeight: '700', color: SILVER_LIGHT },
+  naoVisitadoCidade:{ fontSize: 10, color: SILVER_DARK, marginTop: 1 },
+  naoVisitadoBadge: { backgroundColor: DANGER + '18', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 7, borderWidth: 1, borderColor: DANGER + '35' },
+  naoVisitadoBadgeTxt: { fontSize: 8, fontWeight: '700', color: DANGER },
+
+  lembretesCard:  { marginHorizontal: 14, backgroundColor: CARD_BG, borderRadius: 16, borderWidth: 1, borderColor: GOLD + '20', overflow: 'hidden', marginBottom: 4 },
+  lembreteItem:   { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
+  lembreteBorder: { borderBottomWidth: 1, borderBottomColor: SILVER + '12' },
+  lembreteIconWrap:{ width: 32, height: 32, borderRadius: 9, backgroundColor: WARN + '18', justifyContent: 'center', alignItems: 'center' },
+  lembreteNome:   { fontSize: 12, fontWeight: 'bold', color: SILVER_LIGHT },
+  lembreteTxt:    { fontSize: 11, color: SILVER_DARK, marginTop: 2, lineHeight: 15 },
+
+  despesasCard:   { marginHorizontal: 14, backgroundColor: CARD_BG, borderRadius: 16, borderWidth: 1, borderColor: DANGER + '25', overflow: 'hidden', marginBottom: 4 },
+  despesasTotalRow:{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 13, borderBottomWidth: 1, borderBottomColor: DANGER + '20', backgroundColor: DANGER + '08' },
+  despesasTotalIcon:{ width: 34, height: 34, borderRadius: 10, backgroundColor: DANGER + '20', justifyContent: 'center', alignItems: 'center' },
+  despesasTotalLabel:{ fontSize: 10, color: SILVER_DARK },
+  despesasTotalValor:{ fontSize: 17, fontWeight: 'bold', color: DANGER },
+  despesasTotalQtd:{ fontSize: 10, color: SILVER_DARK },
+  despesasVazio:  { alignItems: 'center', paddingVertical: 18, gap: 6 },
+  despesasVazioTxt:{ fontSize: 12, color: SILVER_DARK },
+  despesaItem:    { flexDirection: 'row', alignItems: 'center', gap: 9, padding: 12, borderBottomWidth: 1, borderBottomColor: SILVER + '10' },
+  despesaIconWrap:{ width: 32, height: 32, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+  despesaDescricao:{ fontSize: 12, fontWeight: '700', color: SILVER_LIGHT },
+  despesaTipo:    { fontSize: 10, color: SILVER_DARK, marginTop: 1 },
+  despesaValor:   { fontSize: 12, fontWeight: 'bold', color: DANGER },
+  addDespesaBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: GOLD, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10 },
+  addDespesaBtnTxt:{ fontSize: 11, fontWeight: 'bold', color: DARK_BG },
+
+  visitaItem:     { flexDirection: 'row', alignItems: 'center', gap: 9, marginHorizontal: 14, marginBottom: 7, backgroundColor: CARD_BG, borderRadius: 12, padding: 11, borderWidth: 1, borderColor: SILVER + '15' },
+  visitaIconWrap: { width: 30, height: 30, borderRadius: 9, justifyContent: 'center', alignItems: 'center' },
+  visitaNome:     { fontSize: 12, fontWeight: '700', color: SILVER_LIGHT },
+  visitaData:     { fontSize: 10, color: SILVER_DARK, marginTop: 1 },
+  visitaBadge:    { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 7, borderWidth: 1 },
+  visitaBadgeTxt: { fontSize: 9, fontWeight: '700' },
+  verTodosBtn:    { paddingHorizontal: 12, paddingVertical: 6 },
+  verTodosTxt:    { fontSize: 12, color: GOLD, fontWeight: '700' },
+
+  modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalGPSOverlay:{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalSheet:     { backgroundColor: MODAL_BG, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 16, paddingTop: 10, borderWidth: 1, borderColor: GOLD + '20' },
+  modalHandle:    { width: 36, height: 4, borderRadius: 2, backgroundColor: SILVER_DARK + '50', alignSelf: 'center', marginBottom: 14 },
+  modalTitle:     { fontSize: 17, fontWeight: 'bold', color: SILVER_LIGHT, marginBottom: 14 },
+  gpsBanner:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: SUCCESS + '12', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: SUCCESS + '25' },
+  gpsBannerTxt:   { fontSize: 12, color: SUCCESS, fontWeight: '700', flex: 1 },
+  gpsCoordsSmall: { fontSize: 10, color: SILVER_DARK },
+
+  formLabel:  { fontSize: 11, fontWeight: '700', color: SILVER_DARK, marginBottom: 5, marginTop: 2, letterSpacing: 0.4 },
+  inputWrap:  { flexDirection: 'row', alignItems: 'center', backgroundColor: CARD_BG2, borderRadius: 11, paddingHorizontal: 12, borderWidth: 1, borderColor: SILVER + '20', marginBottom: 11 },
+  input:      { flex: 1, color: SILVER_LIGHT, fontSize: 14, paddingVertical: 11 },
+  tipoChip:   { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, borderWidth: 1.5, borderColor: SILVER + '30', backgroundColor: CARD_BG2, marginRight: 7 },
+  tipoChipTxt:{ fontSize: 11, fontWeight: '700', color: SILVER },
+  saveBtn:    { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: GOLD, borderRadius: 13, paddingVertical: 14, marginTop: 4, shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
+  saveBtnTxt: { fontSize: 14, fontWeight: 'bold', color: DARK_BG },
+  cancelBtn:  { flex: 0.4, justifyContent: 'center', alignItems: 'center', backgroundColor: CARD_BG2, borderRadius: 13, paddingVertical: 14, borderWidth: 1, borderColor: SILVER + '20' },
+  cancelBtnTxt:{ fontSize: 13, fontWeight: '700', color: SILVER_DARK },
+});

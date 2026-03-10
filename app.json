@@ -17,15 +17,31 @@
         "backgroundColor": "#001E2E"
       },
       "package": "com.maya.representacoes",
-      "versionCode": 1
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA",
+        "READ_MEDIA_IMAGES"
+      ]
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.maya.representacoes"
+      "bundleIdentifier": "com.maya.representacoes",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Necessário para capturar localização dos clientes.",
+        "NSLocationAlwaysUsageDescription": "Necessário para rastrear rota durante visitas.",
+        "NSCameraUsageDescription": "Necessário para fotografar clientes.",
+        "NSPhotoLibraryUsageDescription": "Necessário para selecionar foto dos clientes."
+      }
     },
+    "backgroundColor": "#001E2E",
     "web": {
       "favicon": "./assets/favicon.png",
-      "bundler": "metro"
+      "bundler": "metro",
+      "backgroundColor": "#001E2E"
     },
     "plugins": [
       [
@@ -36,9 +52,30 @@
           "backgroundColor": "#001E2E"
         }
       ],
-      "expo-build-properties",
-      "expo-location",
-      "expo-sharing"
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "34.0.0"
+          }
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Necessário para capturar localização dos clientes."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Necessário para selecionar fotos dos clientes.",
+          "cameraPermission": "Necessário para fotografar clientes."
+        }
+      ],
+      "expo-font"
     ],
     "extra": {
       "eas": {

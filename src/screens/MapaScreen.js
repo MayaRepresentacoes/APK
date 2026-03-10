@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Platform,
   Dimensions, StatusBar, ScrollView, Animated, ActivityIndicator,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { Icon } from 'react-native-elements';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { collection, getDocs } from 'firebase/firestore';
@@ -15,15 +15,26 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const SUCCESS = '#4CAF50';
 const DANGER  = '#EF5350';
 
-// ── FILTRO CHIP ───────────────────────────────────────────────
+function ShimmerLine({ color = GOLD }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(Animated.timing(anim, { toValue: 1, duration: 2200, useNativeDriver: true })).start();
+  }, []);
+  return (
+    <View style={{ height: 2, width: '100%', backgroundColor: color + '30', overflow: 'hidden' }}>
+      <Animated.View style={{ position: 'absolute', height: '100%', width: 80, backgroundColor: color + 'CC', transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [-80, SW] }) }] }} />
+    </View>
+  );
+}
+
 function FilterChip({ label, icon, active, color, onPress }) {
   return (
     <TouchableOpacity
       style={[fc.chip, active
         ? { backgroundColor: color, borderColor: color }
-        : { backgroundColor: CARD_BG, borderColor: color + '55' }]}
+        : { backgroundColor: CARD_BG + 'EE', borderColor: color + '55' }]}
       onPress={onPress} activeOpacity={0.8}>
-      <Icon name={icon} size={13} color={active ? DARK_BG : color} />
+      <Icon name={icon} size={13} color={active ? DARK_BG : color} type="material" />
       <Text style={[fc.txt, { color: active ? DARK_BG : color }]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -33,7 +44,6 @@ const fc = StyleSheet.create({
   txt:  { fontSize: 11, fontWeight: '700' },
 });
 
-// ── CARD BOTTOM (cliente selecionado) ─────────────────────────
 function ClienteBottomCard({ cliente, userLocation, onClose, onMaps, onWaze }) {
   const tc   = getTipoColor(cliente.tipo);
   const dist = userLocation && cliente.latitude && cliente.longitude
@@ -45,7 +55,7 @@ function ClienteBottomCard({ cliente, userLocation, onClose, onMaps, onWaze }) {
       <View style={cb.content}>
         <View style={cb.row}>
           <View style={[cb.iconWrap, { backgroundColor: tc.bg }]}>
-            <Icon name={getTipoIcon(cliente.tipo)} size={20} color={tc.main} />
+            <Icon name={getTipoIcon(cliente.tipo)} size={20} color={tc.main} type="material" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={cb.nome}>{cliente.nome}</Text>
@@ -58,16 +68,16 @@ function ClienteBottomCard({ cliente, userLocation, onClose, onMaps, onWaze }) {
             </View>
           )}
           <TouchableOpacity style={cb.closeBtn} onPress={onClose}>
-            <Icon name="close" size={18} color={SILVER_DARK} />
+            <Icon name="close" size={18} color={SILVER_DARK} type="material" />
           </TouchableOpacity>
         </View>
         <View style={cb.actions}>
           <TouchableOpacity style={[cb.btn, { backgroundColor: '#4285F4' }]} onPress={onMaps} activeOpacity={0.85}>
-            <Icon name="map" size={15} color="#fff" />
+            <Icon name="map" size={15} color="#fff" type="material" />
             <Text style={cb.btnTxt}>Google Maps</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[cb.btn, { backgroundColor: '#33CCFF' }]} onPress={onWaze} activeOpacity={0.85}>
-            <Icon name="directions-car" size={15} color={DARK_BG} />
+            <Icon name="directions-car" size={15} color={DARK_BG} type="material" />
             <Text style={[cb.btnTxt, { color: DARK_BG }]}>Waze</Text>
           </TouchableOpacity>
         </View>
@@ -76,7 +86,7 @@ function ClienteBottomCard({ cliente, userLocation, onClose, onMaps, onWaze }) {
   );
 }
 const cb = StyleSheet.create({
-  wrap:     { backgroundColor: CARD_BG, borderRadius: 18, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 10 },
+  wrap:     { backgroundColor: CARD_BG, borderRadius: 20, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 12, borderWidth: 1, borderColor: GOLD + '20' },
   bar:      { height: 3 },
   content:  { padding: 14 },
   row:      { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
@@ -92,7 +102,6 @@ const cb = StyleSheet.create({
   btnTxt:   { fontSize: 12, fontWeight: 'bold', color: '#fff' },
 });
 
-// ── GERA HTML DO MAPA (Leaflet — sem API key) ─────────────────
 function buildMapHTML(clientes, userLat, userLng) {
   const markersJS = clientes.map(c => {
     const color = c.tipo === 'loja' ? '#E8B432' : c.tipo === 'obra' ? '#4CAF50' : '#5BA3D0';
@@ -159,7 +168,6 @@ map.on('click', function() {
 </html>`;
 }
 
-// ════════════════════════════════════════════════════════════
 export default function MapaScreen({ navigation, route }) {
   const clienteDestino = route?.params?.clienteDestino || null;
 
@@ -168,24 +176,21 @@ export default function MapaScreen({ navigation, route }) {
   const [userLocation,    setUserLocation]    = useState(null);
   const [loading,         setLoading]         = useState(true);
   const [selectedCliente, setSelectedCliente] = useState(null);
-  const [viewMode,        setViewMode]        = useState('mapa'); // 'mapa' | 'lista'
+  const [viewMode,        setViewMode]        = useState('mapa');
 
   const webviewRef = useRef(null);
   const cardAnim   = useRef(new Animated.Value(300)).current;
 
   useEffect(() => { getUserLocation(); loadClientes(); }, []);
 
-  // Centraliza no clienteDestino vindo do Dashboard
   useEffect(() => {
     if (clienteDestino && viewMode === 'mapa') {
       setSelectedCliente(clienteDestino);
-      // Envia comando ao Leaflet para centralizar
       const js = `map.setView([${clienteDestino.latitude}, ${clienteDestino.longitude}], 15); true;`;
       webviewRef.current?.injectJavaScript(js);
     }
   }, [clienteDestino, viewMode]);
 
-  // Animação do card bottom
   useEffect(() => {
     Animated.spring(cardAnim, {
       toValue: selectedCliente ? 0 : 300,
@@ -224,7 +229,6 @@ export default function MapaScreen({ navigation, route }) {
 
   const filteredClientes = clientes.filter(c => selectedFilters.includes(c.tipo));
 
-  // Mensagem do WebView (clique no marker)
   const onWebViewMessage = (event) => {
     try {
       const { id } = JSON.parse(event.nativeEvent.data);
@@ -253,13 +257,15 @@ export default function MapaScreen({ navigation, route }) {
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: DARK_BG }}>
-        <Icon name="location-searching" size={44} color={GOLD} />
-        <Text style={{ fontSize: 16, color: SILVER, marginTop: 14, fontWeight: '600' }}>Carregando mapa...</Text>
+        <View style={ds.loadingIcon}>
+          <Icon name="location-searching" size={36} color={GOLD} type="material" />
+        </View>
+        <Text style={{ fontSize: 15, color: SILVER, marginTop: 16, fontWeight: '600' }}>Carregando mapa...</Text>
+        <Text style={{ fontSize: 11, color: SILVER_DARK, marginTop: 6 }}>Aguardando GPS...</Text>
       </View>
     );
   }
 
-  // Web → lista simples
   if (Platform.OS === 'web') {
     return (
       <ListaView
@@ -308,32 +314,36 @@ export default function MapaScreen({ navigation, route }) {
         />
       )}
 
-      {/* ── HEADER ── */}
+      {/* ── HEADER FLUTUANTE ── */}
       <View style={ds.header}>
         <View style={ds.headerRow}>
-          <View>
-            <Text style={ds.title}>Mapa</Text>
-            <Text style={ds.sub}>{filteredClientes.length} clientes com GPS</Text>
+          <View style={ds.titleBlock}>
+            <View style={ds.titleIcon}>
+              <Icon name="map" size={16} color={DARK_BG} type="material" />
+            </View>
+            <View>
+              <Text style={ds.title}>Mapa</Text>
+              <Text style={ds.sub}>{filteredClientes.length} clientes com GPS</Text>
+            </View>
           </View>
           <View style={ds.headerBtns}>
-            {/* Toggle mapa/lista */}
             <TouchableOpacity
-              style={[ds.iconBtn, viewMode === 'lista' && { backgroundColor: GOLD }]}
+              style={[ds.iconBtn, viewMode === 'lista' && { backgroundColor: GOLD, borderColor: GOLD }]}
               onPress={() => setViewMode(v => v === 'mapa' ? 'lista' : 'mapa')}
               activeOpacity={0.8}>
-              <Icon name={viewMode === 'mapa' ? 'list' : 'map'} size={20} color={viewMode === 'lista' ? DARK_BG : GOLD} />
+              <Icon name={viewMode === 'mapa' ? 'list' : 'map'} size={18} color={viewMode === 'lista' ? DARK_BG : GOLD} type="material" />
             </TouchableOpacity>
-            {/* Centralizar */}
             {viewMode === 'mapa' && (
               <TouchableOpacity style={ds.iconBtn} onPress={centralizar} activeOpacity={0.8}>
-                <Icon name="my-location" size={20} color={GOLD} />
+                <Icon name="my-location" size={18} color={GOLD} type="material" />
               </TouchableOpacity>
             )}
           </View>
         </View>
 
-        {/* Filtros */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 4, gap: 0 }}>
+        <ShimmerLine color={GOLD + '60'} />
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingTop: 10, paddingBottom: 4, gap: 0 }}>
           <FilterChip label="Lojas"    icon="store"        active={selectedFilters.includes('loja')}         color={TIPO_COLORS.loja.main}         onPress={() => toggleFilter('loja')} />
           <FilterChip label="Obras"    icon="construction" active={selectedFilters.includes('obra')}         color={TIPO_COLORS.obra.main}         onPress={() => toggleFilter('obra')} />
           <FilterChip label="Distrib." icon="business"     active={selectedFilters.includes('distribuidor')} color={TIPO_COLORS.distribuidor.main} onPress={() => toggleFilter('distribuidor')} />
@@ -358,11 +368,14 @@ export default function MapaScreen({ navigation, route }) {
 
 const ds = StyleSheet.create({
   container:  { flex: 1, backgroundColor: DARK_BG },
-  header:     { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: DARK_BG + 'EE', paddingTop: 50, paddingHorizontal: 16, paddingBottom: 10, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
-  headerRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  title:      { fontSize: 22, fontWeight: 'bold', color: SILVER_LIGHT },
+  loadingIcon:{ width: 72, height: 72, borderRadius: 24, backgroundColor: CARD_BG, borderWidth: 1, borderColor: GOLD + '40', justifyContent: 'center', alignItems: 'center', shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6 },
+  header:     { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: DARK_BG + 'F2', paddingTop: 52, paddingHorizontal: 16, paddingBottom: 12, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 },
+  headerRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  titleBlock: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  titleIcon:  { width: 36, height: 36, borderRadius: 12, backgroundColor: GOLD, justifyContent: 'center', alignItems: 'center' },
+  title:      { fontSize: 20, fontWeight: 'bold', color: SILVER_LIGHT },
   sub:        { fontSize: 11, color: SILVER_DARK, marginTop: 1 },
   headerBtns: { flexDirection: 'row', gap: 8 },
-  iconBtn:    { width: 40, height: 40, borderRadius: 20, backgroundColor: CARD_BG, borderWidth: 1, borderColor: GOLD + '40', justifyContent: 'center', alignItems: 'center' },
-  cardBottom: { position: 'absolute', bottom: 90, left: 16, right: 16 },
+  iconBtn:    { width: 40, height: 40, borderRadius: 14, backgroundColor: CARD_BG + 'EE', borderWidth: 1, borderColor: GOLD + '40', justifyContent: 'center', alignItems: 'center' },
+  cardBottom: { position: 'absolute', bottom: 16, left: 16, right: 16 },
 });

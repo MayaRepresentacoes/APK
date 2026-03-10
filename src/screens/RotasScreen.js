@@ -4,11 +4,12 @@ import {
   Alert, ActivityIndicator, Platform, StatusBar,
   Animated, Dimensions, ScrollView, Share, Linking,
 } from 'react-native';
-import { MaterialIcons as Icon } from '@expo/vector-icons';
+import { Icon } from 'react-native-elements';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import VisitaModal from './VisitaModal';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -21,6 +22,19 @@ const DARK_BG      = '#001E2E';
 const CARD_BG      = '#002840';
 const CARD_BG2     = '#003352';
 const SUCCESS      = '#4CAF50';
+const DANGER       = '#EF5350';
+const WARN         = '#FF9800';
+
+// Dias sem visita que aciona alerta
+const DIAS_ALERTA_VISITA = 30;
+
+// Mapeamento completo: qualquer substring do endereço → nome padronizado da cidade
+
+// Extrai cidade padronizada de um cliente — usa campo direto
+const getCidadeFromCliente = (c) => {
+  if (c.cidade && c.cidade.trim()) return c.cidade.trim();
+  return 'Sem cidade';
+};
 
 const TIPO_COLORS = {
   loja:         { main: '#E8B432', light: '#F5D07A', bg: '#E8B43220' },
@@ -41,8 +55,6 @@ const calcDist = (la1, lo1, la2, lo2) => {
 // ── OTIMIZADOR: Nearest Neighbor + 2-opt ─────────────────────
 const otimizarRota = (pontos) => {
   if (pontos.length <= 2) return pontos;
-
-  // Nearest Neighbor partindo do índice 0
   const visitados = [pontos[0]];
   const restantes = [...pontos.slice(1)];
   while (restantes.length > 0) {
@@ -55,8 +67,6 @@ const otimizarRota = (pontos) => {
     visitados.push(restantes[menorIdx]);
     restantes.splice(menorIdx, 1);
   }
-
-  // 2-opt: troca pares de arestas para reduzir distância total
   let melhorou = true;
   while (melhorou) {
     melhorou = false;
@@ -92,7 +102,7 @@ const estimarTempo = (km) => {
   return m > 0 ? `${h}h ${m}min` : `${h}h`;
 };
 
-const estimarCombustivel = (km, consumo = 10) => (km / consumo).toFixed(1); // L/100km padrão
+const estimarCombustivel = (km, consumo = 8) => (km / consumo).toFixed(1);
 
 // ── SHIMMER ───────────────────────────────────────────────────
 function ShimmerLine({ color = GOLD }) {
@@ -122,7 +132,7 @@ function KpiBox({ icon, value, label, gold = false }) {
   return (
     <View style={kb.box}>
       <Animated.View style={[kb.icon, { backgroundColor: (gold ? GOLD : SILVER) + '20', transform: [{ scale: pulse }] }]}>
-        <Icon name={icon} size={18} color={gold ? GOLD : SILVER} />
+        <Icon name={icon} size={18} color={gold ? GOLD : SILVER} type="material" />
       </Animated.View>
       <Text style={[kb.val, { color: gold ? GOLD : SILVER }]}>{value}</Text>
       <Text style={kb.label}>{label}</Text>
@@ -137,7 +147,7 @@ const kb = StyleSheet.create({
 });
 
 // ── CLIENTE ITEM ──────────────────────────────────────────────
-function ClienteItem({ item, selected, onPress, userLocation }) {
+function ClienteItem({ item, selected, onPress, userLocation, alerta }) {
   const tc    = getTipoColor(item.tipo);
   const scale = useRef(new Animated.Value(1)).current;
   const dist  = userLocation
@@ -155,24 +165,40 @@ function ClienteItem({ item, selected, onPress, userLocation }) {
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
       <TouchableOpacity
-        style={[ci.card, selected && { borderColor: tc.main + '90', backgroundColor: tc.bg }]}
+        style={[
+          ci.card,
+          selected && { borderColor: tc.main + '90', backgroundColor: tc.bg },
+          alerta?.tipo === 'nao_comprou' && !selected && { borderColor: DANGER + '40' },
+          alerta?.tipo === 'sem_visita'  && !selected && { borderColor: DANGER + '30' },
+        ]}
         onPress={handlePress} activeOpacity={0.85}>
         {selected && <ShimmerLine color={tc.main} />}
+        {/* Barra de alerta no topo do card */}
+        {alerta && !selected && (
+          <View style={[ci.alertBar, { backgroundColor: alerta.cor + '25', borderBottomColor: alerta.cor + '40' }]}>
+            <Icon name={alerta.tipo === 'nao_comprou' ? 'cancel' : alerta.tipo === 'sem_visita' ? 'event-busy' : 'schedule'}
+              size={11} color={alerta.cor} type="material" />
+            <Text style={[ci.alertTxt, { color: alerta.cor }]}>{alerta.label}</Text>
+            {alerta.dias != null && (
+              <Text style={[ci.alertDias, { color: alerta.cor + 'AA' }]}>• última há {alerta.dias}d</Text>
+            )}
+          </View>
+        )}
         <View style={ci.row}>
           <View style={[ci.check,
             selected
               ? { backgroundColor: tc.main, borderColor: tc.main }
               : { backgroundColor: 'transparent', borderColor: SILVER + '50' }]}>
-            {selected && <Icon name="check" size={14} color={DARK_BG} />}
+            {selected && <Icon name="check" size={14} color={DARK_BG} type="material" />}
           </View>
           <View style={[ci.iconWrap, { backgroundColor: tc.bg }]}>
-            <Icon name={getTipoIcon(item.tipo)} size={18} color={tc.main} />
+            <Icon name={getTipoIcon(item.tipo)} size={18} color={tc.main} type="material" />
           </View>
           <View style={ci.info}>
             <Text style={ci.nome}>{item.nome}</Text>
             {item.endereco ? (
               <View style={ci.addrRow}>
-                <Icon name="location-on" size={10} color={SILVER_DARK} />
+                <Icon name="location-on" size={10} color={SILVER_DARK} type="material" />
                 <Text style={ci.addr} numberOfLines={1}>{item.endereco}</Text>
               </View>
             ) : null}
@@ -193,63 +219,102 @@ function ClienteItem({ item, selected, onPress, userLocation }) {
   );
 }
 const ci = StyleSheet.create({
-  card:    { backgroundColor: CARD_BG, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: SILVER + '25', overflow: 'hidden' },
-  row:     { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
-  check:   { width: 24, height: 24, borderRadius: 7, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
-  iconWrap:{ width: 36, height: 36, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
-  info:    { flex: 1 },
-  nome:    { fontSize: 13, fontWeight: 'bold', color: SILVER_LIGHT },
-  addrRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  addr:    { fontSize: 10, color: SILVER_DARK, marginLeft: 3, flex: 1 },
-  right:   { alignItems: 'flex-end', gap: 4 },
-  dist:    { fontSize: 11, fontWeight: 'bold' },
-  badge:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, borderWidth: 1 },
-  badgeTxt:{ fontSize: 9, fontWeight: '700' },
+  card:     { backgroundColor: CARD_BG, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: SILVER + '25', overflow: 'hidden' },
+  alertBar: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 5, borderBottomWidth: 1 },
+  alertTxt: { fontSize: 10, fontWeight: '700' },
+  alertDias:{ fontSize: 10 },
+  row:      { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
+  check:    { width: 24, height: 24, borderRadius: 7, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
+  iconWrap: { width: 36, height: 36, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
+  info:     { flex: 1 },
+  nome:     { fontSize: 13, fontWeight: 'bold', color: SILVER_LIGHT },
+  addrRow:  { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  addr:     { fontSize: 10, color: SILVER_DARK, marginLeft: 3, flex: 1 },
+  right:    { alignItems: 'flex-end', gap: 4 },
+  dist:     { fontSize: 11, fontWeight: 'bold' },
+  badge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, borderWidth: 1 },
+  badgeTxt: { fontSize: 9, fontWeight: '700' },
 });
 
 // ── PARADA DA ROTA ────────────────────────────────────────────
-function RotaItem({ ponto, index, total, distProxima }) {
+function RotaItem({ ponto, index, total, distProxima, isAtual = false, isConcluido = false }) {
   const isStart  = index === 0;
   const isLast   = index === total - 1;
   const tc       = ponto.tipo ? getTipoColor(ponto.tipo) : { main: GOLD, bg: GOLD + '20' };
   const numColor = isStart ? '#2196F3' : isLast ? SUCCESS : tc.main;
 
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (isAtual) {
+      Animated.loop(Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.04, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,    duration: 800, useNativeDriver: true }),
+      ])).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isAtual]);
+
   return (
     <View style={ri.wrap}>
-      {index < total - 1 && <View style={[ri.line, { backgroundColor: numColor + '40' }]} />}
-      <View style={ri.row}>
-        <View style={[ri.num, { backgroundColor: numColor + '20', borderColor: numColor + '60' }]}>
-          {isStart
-            ? <Icon name="my-location" size={14} color={numColor} />
-            : isLast
-              ? <Icon name="flag"       size={14} color={numColor} />
-              : <Text style={[ri.numTxt, { color: numColor }]}>{index}</Text>
+      {index < total - 1 && <View style={[ri.line, { backgroundColor: isConcluido ? SUCCESS + '60' : numColor + '40' }]} />}
+      <Animated.View style={[ri.row, isAtual && { transform: [{ scale: pulseAnim }] }]}>
+        <View style={[ri.num,
+          isConcluido
+            ? { backgroundColor: SUCCESS + '30', borderColor: SUCCESS + '80' }
+            : isAtual
+              ? { backgroundColor: numColor + '40', borderColor: numColor, borderWidth: 2.5 }
+              : { backgroundColor: numColor + '20', borderColor: numColor + '60' }
+        ]}>
+          {isConcluido
+            ? <Icon name="check" size={14} color={SUCCESS} type="material" />
+            : isStart
+              ? <Icon name="my-location" size={14} color={numColor} type="material" />
+              : isLast
+                ? <Icon name="flag"       size={14} color={numColor} type="material" />
+                : <Text style={[ri.numTxt, { color: numColor }]}>{index}</Text>
           }
         </View>
-        <View style={[ri.card, { borderColor: numColor + '35' }]}>
-          <View style={[ri.cardTop, { backgroundColor: numColor }]} />
+        <View style={[ri.card,
+          isConcluido ? { borderColor: SUCCESS + '40', opacity: 0.6 }
+          : isAtual   ? { borderColor: numColor + '80', borderWidth: 1.5, shadowColor: numColor, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 }
+                      : { borderColor: numColor + '35' }
+        ]}>
+          <View style={[ri.cardTop, { backgroundColor: isConcluido ? SUCCESS : numColor }]} />
           <View style={ri.cardContent}>
+            {isAtual && (
+              <View style={ri.atualBadge}>
+                <Icon name="navigation" size={10} color={DARK_BG} type="material" />
+                <Text style={ri.atualBadgeTxt}>EM ROTA</Text>
+              </View>
+            )}
+            {isConcluido && (
+              <View style={[ri.atualBadge, { backgroundColor: SUCCESS }]}>
+                <Icon name="check-circle" size={10} color={DARK_BG} type="material" />
+                <Text style={ri.atualBadgeTxt}>CONCLUÍDO</Text>
+              </View>
+            )}
             <View style={ri.cardRow}>
               {ponto.tipo
                 ? <View style={[ri.typeIcon, { backgroundColor: tc.bg }]}>
-                    <Icon name={getTipoIcon(ponto.tipo)} size={14} color={tc.main} />
+                    <Icon name={getTipoIcon(ponto.tipo)} size={14} color={tc.main} type="material" />
                   </View>
-                : <Icon name={isStart ? 'my-location' : 'flag'} size={16} color={numColor} style={{ marginRight: 8 }} />
+                : <Icon name={isStart ? 'my-location' : 'flag'} size={16} color={numColor} style={{ marginRight: 8 }} type="material" />
               }
               <Text style={ri.cardNome}>{ponto.nome}</Text>
             </View>
             {ponto.endereco ? (
               <Text style={ri.cardAddr} numberOfLines={1}>{ponto.endereco}</Text>
             ) : null}
-            {distProxima != null && (
+            {distProxima != null && !isConcluido && (
               <View style={ri.distRow}>
-                <Icon name="arrow-downward" size={10} color={SILVER_DARK} />
+                <Icon name="arrow-downward" size={10} color={SILVER_DARK} type="material" />
                 <Text style={ri.distTxt}>{distProxima.toFixed(1)} km até o próximo • ≈{estimarTempo(distProxima)}</Text>
               </View>
             )}
           </View>
         </View>
-      </View>
+      </Animated.View>
     </View>
   );
 }
@@ -268,6 +333,10 @@ const ri = StyleSheet.create({
   cardAddr:    { fontSize: 10, color: SILVER_DARK, marginLeft: 34, marginTop: -2 },
   distRow:     { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 3 },
   distTxt:     { fontSize: 10, color: SILVER_DARK },
+  atualBadge:  { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: GOLD, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 6 },
+  atualBadgeTxt:{ fontSize: 9, fontWeight: '800', color: DARK_BG, letterSpacing: 0.5 },
+  currentBadge:    { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, borderWidth: 1, marginLeft: 6 },
+  currentBadgeTxt: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
 });
 
 // ── HTML DO MAPA LEAFLET ──────────────────────────────────────
@@ -323,9 +392,7 @@ var map=L.map('map',{zoomControl:true,attributionControl:false}).setView([${cent
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
 var coords=[${coords}];
 if(coords.length>1){
-  // Linha tracejada dourada da rota
   L.polyline(coords,{color:'#E8B432',weight:5,opacity:0.9,dashArray:'10,6'}).addTo(map);
-  // Seta de direção em cada segmento
   for(var i=0;i<coords.length-1;i++){
     var mid=[(coords[i][0]+coords[i+1][0])/2,(coords[i][1]+coords[i+1][1])/2];
     var angle=Math.atan2(coords[i+1][1]-coords[i][1],coords[i+1][0]-coords[i][0])*180/Math.PI;
@@ -352,16 +419,23 @@ export default function RotasScreen() {
   const [showMapa,     setShowMapa]     = useState(false);
   const [showExportar, setShowExportar] = useState(false);
   const [loading,      setLoading]      = useState(false);
+  const [paradaAtual,  setParadaAtual]  = useState(0);
+  const [visitaCliente, setVisitaCliente] = useState(null);
   const [info,         setInfo]         = useState({ distancia: 0, tempo: '', count: 0, economizado: 0, combustivel: 0 });
+  // Filtro de cidade
+  const [cidadeFiltro, setCidadeFiltro] = useState('Todas');
+  // Alertas por cliente: { clienteId: { diasSemVisita, ultimoResultado } }
+  const [alertasClientes, setAlertasClientes] = useState({});
   const exportarAnim = useRef(new Animated.Value(0)).current;
-
-  const headerAnim = useRef(new Animated.Value(0)).current;
-  const rotaAnim   = useRef(new Animated.Value(0)).current;
+  const headerAnim   = useRef(new Animated.Value(0)).current;
+  const rotaAnim     = useRef(new Animated.Value(0)).current;
+  const scrollRef    = useRef(null);
+  const proximoAnim  = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.timing(headerAnim, { toValue: 1, duration: 800, useNativeDriver: true }).start();
     getUserLocation();
-    loadClientes();
+    loadDados();
   }, []);
 
   const getUserLocation = async () => {
@@ -373,17 +447,50 @@ export default function RotasScreen() {
     } catch (e) { console.log('Erro localização:', e); }
   };
 
-  const loadClientes = async () => {
+  const loadDados = async () => {
     try {
-      const snap = await getDocs(collection(db, 'clientes'));
+      // ── clientes ──
+      const snapC = await getDocs(collection(db, 'clientes'));
       const data = [];
-      snap.forEach(d => {
+      snapC.forEach(d => {
         const c = d.data();
         if (c.latitude && c.longitude)
           data.push({ id: d.id, ...c, latitude: parseFloat(c.latitude), longitude: parseFloat(c.longitude) });
       });
       setClientes(data);
-    } catch (e) { console.log('Erro clientes:', e); }
+
+      // ── visitas → alertas por cliente ──
+      const snapV = await getDocs(collection(db, 'visitas'));
+      const visitasPorCliente = {};
+      snapV.forEach(d => {
+        const v = d.data();
+        if (!v.clienteId) return;
+        if (!visitasPorCliente[v.clienteId]) visitasPorCliente[v.clienteId] = [];
+        visitasPorCliente[v.clienteId].push(v);
+      });
+
+      const hoje = new Date();
+      const alertas = {};
+      data.forEach(c => {
+        const visitas = visitasPorCliente[c.id] || [];
+        if (visitas.length === 0) {
+          alertas[c.id] = { tipo: 'sem_visita', label: 'Sem visita', cor: DANGER };
+          return;
+        }
+        visitas.sort((a, b) => new Date(b.dataLocal || 0) - new Date(a.dataLocal || 0));
+        const ultima = visitas[0];
+        const diasSem = Math.floor((hoje - new Date(ultima.dataLocal || 0)) / (1000 * 60 * 60 * 24));
+        if (ultima.resultado === 'nao_comprou') {
+          alertas[c.id] = { tipo: 'nao_comprou', label: 'Não comprou', cor: DANGER, dias: diasSem };
+        } else if (diasSem >= DIAS_ALERTA_VISITA) {
+          alertas[c.id] = { tipo: 'antigo', label: `${diasSem}d sem visita`, cor: WARN, dias: diasSem };
+        } else if (ultima.resultado === 'retornar') {
+          alertas[c.id] = { tipo: 'retornar', label: 'Retornar', cor: WARN, dias: diasSem };
+        }
+      });
+      setAlertasClientes(alertas);
+
+    } catch (e) { console.log('Erro loadDados:', e); }
   };
 
   const toggleCliente = (c) =>
@@ -394,33 +501,17 @@ export default function RotasScreen() {
     if (!userLocation)        { Alert.alert('Erro', 'Aguardando localização GPS...'); return; }
     setLoading(true);
     try {
-      const origem = {
-        latitude:  userLocation.latitude,
-        longitude: userLocation.longitude,
-        nome: 'Minha Localização',
-        tipo: null,
-      };
-
-      // Encontra o cliente MAIS DISTANTE da origem → será o destino final
+      const origem = { latitude: userLocation.latitude, longitude: userLocation.longitude, nome: 'Minha Localização', tipo: null };
       const maisDistante = selected.reduce((max, c) => {
         const d = calcDist(userLocation.latitude, userLocation.longitude, c.latitude, c.longitude);
         return d > max.dist ? { c, dist: d } : max;
       }, { c: selected[0], dist: 0 }).c;
-
-      // Intermediários = todos exceto o mais distante
       const intermediarios = selected.filter(c => c.id !== maisDistante.id);
-
-      // Otimiza os intermediários com Nearest Neighbor + 2-opt
       const pontosOtim = otimizarRota([origem, ...intermediarios]);
-
-      // Rota final: otimizados + mais distante no fim
       const rotaFinal = [...pontosOtim, maisDistante];
-
-      // Calcula economia em relação à ordem original sem otimização
       const distOtimizada = calcularDistanciaTotal(rotaFinal);
       const distSemOtim   = calcularDistanciaTotal([origem, ...selected]);
       const economizado   = Math.max(0, distSemOtim - distOtimizada);
-
       setRota(rotaFinal);
       setInfo({
         distancia:   distOtimizada.toFixed(1),
@@ -429,8 +520,8 @@ export default function RotasScreen() {
         economizado: economizado.toFixed(1),
         combustivel: estimarCombustivel(distOtimizada),
       });
-
       rotaAnim.setValue(0);
+      setParadaAtual(1); // começa na primeira parada real (índice 0 = origem)
       setShowRota(true);
       setShowMapa(false);
       Animated.timing(rotaAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
@@ -465,11 +556,9 @@ export default function RotasScreen() {
 
   const abrirWaze = () => {
     if (rota.length < 2) return;
-    // Waze não suporta waypoints — navega ao primeiro destino
     const primeiro = rota[1];
     const url = `waze://?ll=${primeiro.latitude},${primeiro.longitude}&navigate=yes`;
     Linking.openURL(url).catch(() => {
-      // Fallback web se Waze não instalado
       Linking.openURL(`https://waze.com/ul?ll=${primeiro.latitude},${primeiro.longitude}&navigate=yes`)
         .catch(() => Share.share({ message: `🚗 Waze:\nhttps://waze.com/ul?ll=${primeiro.latitude},${primeiro.longitude}&navigate=yes` }));
     });
@@ -485,7 +574,55 @@ export default function RotasScreen() {
     Animated.timing(exportarAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setShowExportar(false));
   };
 
-  // ── MODAL EXPORTAR ────────────────────────────────────────
+  const reiniciarRota = () => {
+    Alert.alert(
+      'Reiniciar Rota',
+      'Deseja limpar a rota atual e voltar à seleção de clientes?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Reiniciar',
+          style: 'destructive',
+          onPress: () => {
+            setRota([]);
+            setSelected([]);
+            setParadaAtual(0);
+            setShowRota(false);
+            setShowMapa(false);
+          },
+        },
+      ]
+    );
+  };
+
+  const avancarProximo = () => {
+    const proxIdx = paradaAtual + 1;
+    if (proxIdx >= rota.length) {
+      Alert.alert('🏁 Rota Concluída!', `Você completou todas as ${info.count} paradas!`, [
+        { text: 'Reiniciar', onPress: reiniciarRota },
+        { text: 'OK', style: 'cancel' },
+      ]);
+      return;
+    }
+    // Abre check-in do cliente ATUAL antes de avançar
+    const clienteAtual = rota[paradaAtual];
+    if (clienteAtual?.id) {
+      setVisitaCliente(clienteAtual);
+    } else {
+      // É a origem (sem id) — avança direto
+      _avancarParada(proxIdx);
+    }
+  };
+
+  const _avancarParada = (proxIdx) => {
+    Animated.sequence([
+      Animated.timing(proximoAnim, { toValue: 0.92, duration: 80, useNativeDriver: true }),
+      Animated.spring(proximoAnim, { toValue: 1, friction: 5, useNativeDriver: true }),
+    ]).start();
+    setParadaAtual(proxIdx);
+    scrollRef.current?.scrollTo({ y: proxIdx * 88, animated: true });
+  };
+
   const ModalExportar = () => {
     if (!showExportar) return null;
     return (
@@ -495,16 +632,11 @@ export default function RotasScreen() {
           transform: [{ translateY: exportarAnim.interpolate({ inputRange: [0, 1], outputRange: [400, 0] }) }],
           opacity: exportarAnim,
         }]}>
-          {/* Handle */}
           <View style={me.handle} />
-
           <Text style={me.title}>Exportar Rota</Text>
           <Text style={me.sub}>{info.count} paradas • {info.distancia} km • {info.tempo}</Text>
-
           <ShimmerLine color={GOLD} />
-
           <View style={me.apps}>
-            {/* Google Maps */}
             <TouchableOpacity style={me.appBtn} onPress={() => { fecharModalExportar(); setTimeout(abrirGoogleMaps, 300); }} activeOpacity={0.85}>
               <View style={[me.appIcon, { backgroundColor: '#4285F420' }]}>
                 <Text style={me.appEmoji}>🗺️</Text>
@@ -514,13 +646,10 @@ export default function RotasScreen() {
                 <Text style={me.appDesc}>Rota completa com todas as paradas e waypoints</Text>
               </View>
               <View style={[me.appBadge, { backgroundColor: '#4285F4' }]}>
-                <Icon name="open-in-new" size={14} color="#fff" />
+                <Icon name="open-in-new" size={14} color="#fff" type="material" />
               </View>
             </TouchableOpacity>
-
             <View style={me.divider} />
-
-            {/* Waze */}
             <TouchableOpacity style={me.appBtn} onPress={() => { fecharModalExportar(); setTimeout(abrirWaze, 300); }} activeOpacity={0.85}>
               <View style={[me.appIcon, { backgroundColor: '#33CCFF20' }]}>
                 <Text style={me.appEmoji}>🚗</Text>
@@ -530,13 +659,10 @@ export default function RotasScreen() {
                 <Text style={me.appDesc}>Navega até a primeira parada com trânsito em tempo real</Text>
               </View>
               <View style={[me.appBadge, { backgroundColor: '#33AACC' }]}>
-                <Icon name="open-in-new" size={14} color="#fff" />
+                <Icon name="open-in-new" size={14} color="#fff" type="material" />
               </View>
             </TouchableOpacity>
-
             <View style={me.divider} />
-
-            {/* Compartilhar texto */}
             <TouchableOpacity style={me.appBtn} onPress={() => { fecharModalExportar(); setTimeout(compartilharRota, 300); }} activeOpacity={0.85}>
               <View style={[me.appIcon, { backgroundColor: GOLD + '20' }]}>
                 <Text style={me.appEmoji}>📋</Text>
@@ -546,11 +672,10 @@ export default function RotasScreen() {
                 <Text style={me.appDesc}>Envia a rota por WhatsApp, e-mail ou outro app</Text>
               </View>
               <View style={[me.appBadge, { backgroundColor: GOLD }]}>
-                <Icon name="share" size={14} color={DARK_BG} />
+                <Icon name="share" size={14} color={DARK_BG} type="material" />
               </View>
             </TouchableOpacity>
           </View>
-
           <TouchableOpacity style={me.cancelBtn} onPress={fecharModalExportar} activeOpacity={0.8}>
             <Text style={me.cancelTxt}>Cancelar</Text>
           </TouchableOpacity>
@@ -577,23 +702,21 @@ export default function RotasScreen() {
             </View>
           )}
         />
-        {/* Header flutuante */}
         <View style={ds.mapaHeader}>
           <TouchableOpacity style={ds.mapaBackBtn} onPress={() => setShowMapa(false)}>
-            <Icon name="arrow-back" size={20} color={DARK_BG} />
+            <Icon name="arrow-back" size={20} color={DARK_BG} type="material" />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={ds.mapaHeaderTitle}>Rota no Mapa</Text>
             <Text style={ds.mapaHeaderSub}>{info.count} paradas • {info.distancia} km • {info.tempo}</Text>
           </View>
           <TouchableOpacity style={ds.mapaShareBtn} onPress={compartilharRota}>
-            <Icon name="share" size={18} color={DARK_BG} />
+            <Icon name="share" size={18} color={DARK_BG} type="material" />
           </TouchableOpacity>
         </View>
-        {/* Botão exportar */}
         <View style={ds.rotaFooter}>
           <TouchableOpacity style={ds.exportBtn} onPress={abrirModalExportar} activeOpacity={0.85}>
-            <Icon name="directions" size={20} color={DARK_BG} style={{ marginRight: 8 }} />
+            <Icon name="directions" size={20} color={DARK_BG} style={{ marginRight: 8 }} type="material" />
             <Text style={ds.exportBtnTxt}>EXPORTAR ROTA</Text>
           </TouchableOpacity>
         </View>
@@ -607,77 +730,145 @@ export default function RotasScreen() {
     return (
       <View style={ds.container}>
         <StatusBar barStyle="light-content" backgroundColor={DARK_BG} />
-
         <View style={ds.header}>
           <View style={ds.headerTop}>
             <TouchableOpacity style={ds.backBtn} onPress={() => setShowRota(false)}>
-              <Icon name="arrow-back" size={20} color={DARK_BG} />
+              <Icon name="arrow-back" size={20} color={DARK_BG} type="material" />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
               <Text style={ds.headerTitle}>Rota Otimizada</Text>
               <Text style={ds.headerSub}>{info.count} paradas • {info.distancia} km</Text>
             </View>
             <TouchableOpacity style={ds.shareBtn} onPress={compartilharRota}>
-              <Icon name="share" size={20} color={DARK_BG} />
+              <Icon name="share" size={20} color={DARK_BG} type="material" />
             </TouchableOpacity>
           </View>
           <ShimmerLine color={GOLD} />
-
-          {/* KPIs */}
           <View style={ds.kpiBar}>
-            <KpiBox icon="people"            value={info.count}              label="Clientes"  gold />
+            <KpiBox icon="people"            value={info.count}              label="Clientes"    gold />
             <View style={ds.kpiDiv} />
             <KpiBox icon="straighten"        value={`${info.distancia}km`}  label="Distância" />
             <View style={ds.kpiDiv} />
-            <KpiBox icon="access-time"       value={info.tempo}             label="Estimado"  gold />
+            <KpiBox icon="access-time"       value={info.tempo}             label="Estimado"    gold />
             <View style={ds.kpiDiv} />
             <KpiBox icon="local-gas-station" value={`${info.combustivel}L`} label="Combustível" />
             <View style={ds.kpiDiv} />
-            <KpiBox icon="savings"           value={`-${info.economizado}km`} label="Economia" gold />
+            <KpiBox icon="savings"           value={`-${info.economizado}km`} label="Economia"  gold />
           </View>
         </View>
 
-        {/* Botão VER NO MAPA */}
         <TouchableOpacity style={ds.verMapaBtn} onPress={() => setShowMapa(true)} activeOpacity={0.85}>
-          <Icon name="map" size={18} color={DARK_BG} style={{ marginRight: 8 }} />
+          <Icon name="map" size={18} color={DARK_BG} style={{ marginRight: 8 }} type="material" />
           <Text style={ds.verMapaTxt}>VER ROTA NO MAPA</Text>
         </TouchableOpacity>
 
-        {/* Lista da rota */}
         <Animated.ScrollView
+          ref={scrollRef}
           style={{ flex: 1, opacity: rotaAnim }}
-          contentContainerStyle={{ paddingVertical: 12, paddingRight: 16 }}
+          contentContainerStyle={{ paddingVertical: 12, paddingRight: 16, paddingBottom: 20 }}
           showsVerticalScrollIndicator={false}>
           {rota.map((ponto, i) => {
             const distProx = i < rota.length - 1
               ? calcDist(ponto.latitude, ponto.longitude, rota[i+1].latitude, rota[i+1].longitude)
               : null;
-            return <RotaItem key={i} ponto={ponto} index={i} total={rota.length} distProxima={distProx} />;
+            return <RotaItem
+              key={i}
+              ponto={ponto}
+              index={i}
+              total={rota.length}
+              distProxima={distProx}
+              isAtual={i === paradaAtual}
+              isConcluido={i < paradaAtual}
+            />;
           })}
           <View style={ds.chegada}>
-            <Icon name="flag" size={22} color={SUCCESS} />
+            <Icon name="flag" size={22} color={SUCCESS} type="material" />
             <Text style={ds.chegadaTxt}>Destino final — cliente mais distante</Text>
           </View>
-          <View style={{ height: 120 }} />
         </Animated.ScrollView>
 
+        {/* ── FOOTER FIXO ── */}
         <View style={ds.rotaFooter}>
-          <TouchableOpacity style={ds.exportBtn} onPress={abrirModalExportar} activeOpacity={0.85}>
-            <Icon name="directions" size={20} color={DARK_BG} style={{ marginRight: 8 }} />
-            <Text style={ds.exportBtnTxt}>EXPORTAR ROTA</Text>
+
+          {/* Linha 1: REINICIAR + PRÓXIMO */}
+          <View style={ds.footerBtnsRow}>
+            {/* REINICIAR */}
+            <TouchableOpacity style={ds.reiniciarBtn} onPress={reiniciarRota} activeOpacity={0.85}>
+              <Icon name="refresh" size={18} color={SILVER} type="material" />
+              <Text style={ds.reiniciarBtnTxt}>REINICIAR</Text>
+            </TouchableOpacity>
+
+            {/* PRÓXIMO */}
+            <Animated.View style={[ds.proximoBtnWrap, { transform: [{ scale: proximoAnim }] }]}>
+              <TouchableOpacity
+                style={[
+                  ds.proximoBtn,
+                  paradaAtual >= rota.length - 1 && { backgroundColor: SUCCESS },
+                ]}
+                onPress={avancarProximo}
+                activeOpacity={0.85}>
+                <Icon
+                  name={paradaAtual >= rota.length - 1 ? 'flag' : 'skip-next'}
+                  size={20}
+                  color={DARK_BG}
+                  type="material"
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={ds.proximoBtnTxt}>
+                    {paradaAtual >= rota.length - 1 ? 'CONCLUIR ROTA' : 'PRÓXIMO'}
+                  </Text>
+                  {paradaAtual < rota.length - 1 && (
+                    <Text style={ds.proximoBtnSub} numberOfLines={1}>
+                      {rota[paradaAtual + 1]?.nome || ''}
+                    </Text>
+                  )}
+                </View>
+                {paradaAtual < rota.length - 1 && (
+                  <Icon name="arrow-forward" size={16} color={DARK_BG} type="material" />
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+
+          {/* Linha 2: EXPORTAR ROTA */}
+          <TouchableOpacity style={ds.exportBtnSmall} onPress={abrirModalExportar} activeOpacity={0.85}>
+            <Icon name="directions" size={16} color={GOLD} type="material" />
+            <Text style={ds.exportBtnSmallTxt}>Exportar Rota</Text>
           </TouchableOpacity>
+
         </View>
         <ModalExportar />
+
+        <VisitaModal
+          visible={!!visitaCliente}
+          cliente={visitaCliente}
+          onClose={() => setVisitaCliente(null)}
+          onSaved={() => {
+            const proxIdx = paradaAtual + 1;
+            setVisitaCliente(null);
+            _avancarParada(proxIdx);
+          }}
+        />
       </View>
     );
   }
 
   // ── TELA SELEÇÃO ──────────────────────────────────────────
-  const clientesOrdenados = userLocation
+  const getCidade = getCidadeFromCliente;
+
+  const cidadesDisponiveis = ['Todas', ...Array.from(new Set(clientes.map(getCidade))).sort()];
+
+  const clientesBase = userLocation
     ? [...clientes].sort((a, b) =>
         calcDist(userLocation.latitude, userLocation.longitude, a.latitude, a.longitude) -
         calcDist(userLocation.latitude, userLocation.longitude, b.latitude, b.longitude))
     : clientes;
+
+  const clientesFiltrados = cidadeFiltro === 'Todas'
+    ? clientesBase
+    : clientesBase.filter(c => getCidade(c) === cidadeFiltro);
+
+  const totalAlertas = clientesFiltrados.filter(c => alertasClientes[c.id]).length;
 
   return (
     <View style={ds.container}>
@@ -689,7 +880,7 @@ export default function RotasScreen() {
       }]}>
         <View style={ds.headerTop}>
           <View style={ds.headerIcon}>
-            <Icon name="alt-route" size={20} color={DARK_BG} />
+            <Icon name="alt-route" size={20} color={DARK_BG} type="material" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={ds.headerTitle}>Otimizador de Rotas</Text>
@@ -701,7 +892,7 @@ export default function RotasScreen() {
           </View>
           {selected.length > 0 && (
             <TouchableOpacity style={ds.clearBtn} onPress={() => setSelected([])}>
-              <Icon name="clear" size={16} color={SILVER_DARK} />
+              <Icon name="clear" size={16} color={SILVER_DARK} type="material" />
             </TouchableOpacity>
           )}
         </View>
@@ -710,17 +901,65 @@ export default function RotasScreen() {
 
         {selected.length > 0 && (
           <View style={ds.kpiBar}>
-            <KpiBox icon="people"      value={selected.length}           label="Selecionados" gold />
+            <KpiBox icon="people"      value={selected.length}                    label="Selecionados" gold />
             <View style={ds.kpiDiv} />
-            <KpiBox icon="route"       value={clientes.length}           label="Disponíveis" />
+            <KpiBox icon="route"       value={clientesFiltrados.length}           label="Filtrados" />
             <View style={ds.kpiDiv} />
-            <KpiBox icon="my-location" value={userLocation ? '✓ GPS' : '...'} label="Localização" gold />
+            <KpiBox icon="my-location" value={userLocation ? '✓ GPS' : '...'} label="Localização"  gold />
           </View>
         )}
+
+        {/* ── FILTRO DE CIDADES ── */}
+        {cidadesDisponiveis.length > 2 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={ds.cidadesScroll}>
+            {cidadesDisponiveis.map(cidade => (
+              <TouchableOpacity
+                key={cidade}
+                style={[ds.cidadeChip, cidadeFiltro === cidade && ds.cidadeChipAtivo]}
+                onPress={() => setCidadeFiltro(cidade)}
+                activeOpacity={0.8}>
+                <Icon
+                  name={cidade === 'Todas' ? 'public' : 'location-city'}
+                  size={11} color={cidadeFiltro === cidade ? DARK_BG : SILVER_DARK}
+                  type="material" />
+                <Text style={[ds.cidadeChipTxt, cidadeFiltro === cidade && ds.cidadeChipTxtAtivo]}>
+                  {cidade}
+                </Text>
+                {cidade !== 'Todas' && (
+                  <Text style={[ds.cidadeCount, cidadeFiltro === cidade && { color: DARK_BG + 'BB' }]}>
+                    {clientesBase.filter(c => getCidade(c) === cidade).length}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        {/* ── LEGENDA ALERTAS ── */}
+        {totalAlertas > 0 && (
+          <View style={ds.alertaLegenda}>
+            <Icon name="warning" size={12} color={WARN} type="material" />
+            <Text style={ds.alertaLegendaTxt}>
+              {totalAlertas} cliente{totalAlertas > 1 ? 's' : ''} precisam de atenção
+            </Text>
+            <View style={ds.alertaBadgesRow}>
+              <View style={[ds.alertaBadge, { borderColor: DANGER + '50' }]}>
+                <View style={[ds.alertaDot, { backgroundColor: DANGER }]} />
+                <Text style={[ds.alertaBadgeTxt, { color: DANGER }]}>Não comprou/Sem visita</Text>
+              </View>
+              <View style={[ds.alertaBadge, { borderColor: WARN + '50' }]}>
+                <View style={[ds.alertaDot, { backgroundColor: WARN }]} />
+                <Text style={[ds.alertaBadgeTxt, { color: WARN }]}>+{DIAS_ALERTA_VISITA}d/Retornar</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
       </Animated.View>
 
       <FlatList
-        data={clientesOrdenados}
+        data={clientesFiltrados}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
           <ClienteItem
@@ -728,22 +967,33 @@ export default function RotasScreen() {
             selected={!!selected.find(c => c.id === item.id)}
             onPress={() => toggleCliente(item)}
             userLocation={userLocation}
+            alerta={alertasClientes[item.id]}
           />
         )}
         contentContainerStyle={ds.list}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          clientesOrdenados.length > 0 ? (
+          clientesFiltrados.length > 0 ? (
             <View style={ds.listHeader}>
               <Text style={ds.listHeaderTxt}>
-                {clientesOrdenados.length} clientes com GPS{userLocation ? ' • ordem por distância' : ''}
+                {clientesFiltrados.length} cliente{clientesFiltrados.length > 1 ? 's' : ''}
+                {cidadeFiltro !== 'Todas' ? ` em ${cidadeFiltro}` : ''}
+                {userLocation ? ' • por distância' : ''}
               </Text>
               <TouchableOpacity onPress={() => {
-                if (selected.length === clientes.length) setSelected([]);
-                else setSelected([...clientes]);
+                const todosSelected = clientesFiltrados.every(c => selected.find(s => s.id === c.id));
+                if (todosSelected) {
+                  setSelected(prev => prev.filter(s => !clientesFiltrados.find(c => c.id === s.id)));
+                } else {
+                  setSelected(prev => {
+                    const novos = clientesFiltrados.filter(c => !prev.find(s => s.id === c.id));
+                    return [...prev, ...novos];
+                  });
+                }
               }}>
                 <Text style={ds.selectAll}>
-                  {selected.length === clientes.length ? 'Desmarcar todos' : 'Selecionar todos'}
+                  {clientesFiltrados.every(c => selected.find(s => s.id === c.id))
+                    ? 'Desmarcar cidade' : 'Selecionar cidade'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -751,15 +1001,16 @@ export default function RotasScreen() {
         }
         ListEmptyComponent={
           <View style={ds.empty}>
-            <Icon name="location-off" size={52} color={GOLD + '40'} />
-            <Text style={ds.emptyTitle}>Nenhum cliente com GPS</Text>
+            <Icon name="location-off" size={52} color={GOLD + '40'} type="material" />
+            <Text style={ds.emptyTitle}>
+              {cidadeFiltro !== 'Todas' ? `Sem clientes em ${cidadeFiltro}` : 'Nenhum cliente com GPS'}
+            </Text>
             <Text style={ds.emptySub}>Adicione coordenadas de localização aos clientes</Text>
           </View>
         }
       />
 
       <View style={ds.footer}>
-        {/* Botão principal: Otimizar */}
         <TouchableOpacity
           style={[ds.calcBtn, (!selected.length || !userLocation || loading) && ds.calcBtnDisabled]}
           onPress={calcularRota}
@@ -767,18 +1018,16 @@ export default function RotasScreen() {
           activeOpacity={0.85}>
           {loading
             ? <ActivityIndicator color={DARK_BG} size="small" />
-            : <Icon name="alt-route" size={20} color={DARK_BG} style={{ marginRight: 8 }} />
+            : <Icon name="alt-route" size={20} color={DARK_BG} style={{ marginRight: 8 }} type="material" />
           }
           <Text style={ds.calcBtnTxt}>
             {loading ? 'CALCULANDO...' : `OTIMIZAR ROTA${selected.length > 0 ? ` (${selected.length})` : ''}`}
           </Text>
         </TouchableOpacity>
 
-        {/* Botões de exportação rápida sempre visíveis */}
         <View style={ds.quickExportRow}>
           <Text style={ds.quickExportLabel}>Abrir agora em:</Text>
           <View style={ds.quickExportBtns}>
-            {/* Google Maps */}
             <TouchableOpacity
               style={[ds.quickBtn, { backgroundColor: '#4285F4' }]}
               onPress={() => {
@@ -794,8 +1043,6 @@ export default function RotasScreen() {
               <Text style={ds.quickBtnEmoji}>🗺️</Text>
               <Text style={ds.quickBtnTxt}>Google Maps</Text>
             </TouchableOpacity>
-
-            {/* Waze */}
             <TouchableOpacity
               style={[ds.quickBtn, { backgroundColor: '#33AACC' }]}
               onPress={() => {
@@ -828,30 +1075,54 @@ const ds = StyleSheet.create({
   shareBtn:        { width: 40, height: 40, borderRadius: 20, backgroundColor: GOLD, justifyContent: 'center', alignItems: 'center' },
   kpiBar:          { flexDirection: 'row', marginHorizontal: 16, marginTop: 10, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 14, paddingVertical: 4, borderWidth: 1, borderColor: GOLD + '20' },
   kpiDiv:          { width: 1, backgroundColor: SILVER + '20' },
-  list:            { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 200 },
+  list:            { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 20 },
   listHeader:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   listHeaderTxt:   { fontSize: 11, color: SILVER_DARK, flex: 1 },
   selectAll:       { fontSize: 11, color: GOLD, fontWeight: '700' },
+
+  // Filtro de cidades
+  cidadesScroll:   { paddingHorizontal: 14, paddingVertical: 10, gap: 8 },
+  cidadeChip:      { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: CARD_BG2, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: SILVER + '25' },
+  cidadeChipAtivo: { backgroundColor: GOLD, borderColor: GOLD },
+  cidadeChipTxt:   { fontSize: 11, fontWeight: '700', color: SILVER_DARK },
+  cidadeChipTxtAtivo: { color: DARK_BG },
+  cidadeCount:     { fontSize: 10, color: SILVER_DARK + '80', fontWeight: '600', marginLeft: 2 },
+
+  // Legenda alertas
+  alertaLegenda:   { marginHorizontal: 14, marginBottom: 6, backgroundColor: WARN + '10', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: WARN + '30', gap: 6 },
+  alertaLegendaTxt:{ fontSize: 11, fontWeight: '700', color: WARN },
+  alertaBadgesRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  alertaBadge:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: CARD_BG, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1 },
+  alertaDot:       { width: 7, height: 7, borderRadius: 4 },
+  alertaBadgeTxt:  { fontSize: 9, fontWeight: '700' },
+
   empty:           { paddingTop: 80, alignItems: 'center' },
   emptyTitle:      { fontSize: 16, fontWeight: 'bold', color: SILVER, marginTop: 16 },
   emptySub:        { fontSize: 12, color: SILVER_DARK, marginTop: 6, textAlign: 'center' },
   footer:          { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: '#001828', borderTopWidth: 1, borderTopColor: GOLD + '20' },
   calcBtn:         { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: GOLD, borderRadius: 14, paddingVertical: 16, shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10, elevation: 8 },
-  calcBtnDisabled:  { backgroundColor: GOLD + '50', shadowOpacity: 0 },
-  calcBtnTxt:       { fontSize: 15, fontWeight: 'bold', color: DARK_BG, letterSpacing: 0.5 },
-  quickExportRow:   { marginTop: 10, gap: 6 },
-  quickExportLabel: { fontSize: 10, color: SILVER_DARK, textAlign: 'center', letterSpacing: 0.5, marginBottom: 2 },
-  quickExportBtns:  { flexDirection: 'row', gap: 10 },
-  quickBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 12, gap: 6 },
-  quickBtnEmoji:    { fontSize: 16 },
-  quickBtnTxt:      { fontSize: 13, fontWeight: 'bold', color: '#fff' },
+  calcBtnDisabled: { backgroundColor: GOLD + '50', shadowOpacity: 0 },
+  calcBtnTxt:      { fontSize: 15, fontWeight: 'bold', color: DARK_BG, letterSpacing: 0.5 },
+  quickExportRow:  { marginTop: 10, gap: 6 },
+  quickExportLabel:{ fontSize: 10, color: SILVER_DARK, textAlign: 'center', letterSpacing: 0.5, marginBottom: 2 },
+  quickExportBtns: { flexDirection: 'row', gap: 10 },
+  quickBtn:        { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 12, gap: 6 },
+  quickBtnEmoji:   { fontSize: 16 },
+  quickBtnTxt:     { fontSize: 13, fontWeight: 'bold', color: '#fff' },
   verMapaBtn:      { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: GOLD, borderRadius: 14, paddingVertical: 13, marginHorizontal: 16, marginTop: 10, marginBottom: 4, shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
   verMapaTxt:      { fontSize: 14, fontWeight: 'bold', color: DARK_BG },
   chegada:         { flexDirection: 'row', alignItems: 'center', paddingLeft: 40, gap: 10, marginBottom: 8 },
   chegadaTxt:      { fontSize: 12, fontWeight: 'bold', color: SUCCESS },
-  rotaFooter:      { flexDirection: 'row', padding: 14, gap: 10, backgroundColor: '#001828', borderTopWidth: 1, borderTopColor: GOLD + '20' },
-  mapsBtn:         { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 13, borderRadius: 14, gap: 8 },
-  mapsBtnTxt:      { fontSize: 13, fontWeight: 'bold', color: '#fff' },
+  rotaFooter:      { backgroundColor: '#001828', borderTopWidth: 1, borderTopColor: GOLD + '20', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 14 },
+  footerBtnsRow:   { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  reiniciarBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: CARD_BG2, borderRadius: 14, paddingVertical: 15, paddingHorizontal: 16, borderWidth: 1, borderColor: SILVER + '30' },
+  reiniciarBtnTxt: { fontSize: 12, fontWeight: 'bold', color: SILVER, letterSpacing: 0.5 },
+  proximoBtnWrap:  { flex: 1 },
+  proximoBtn:      { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: GOLD, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16, shadowColor: GOLD, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10, elevation: 8 },
+  proximoBtnTxt:   { fontSize: 14, fontWeight: 'bold', color: DARK_BG, letterSpacing: 0.5 },
+  proximoBtnSub:   { fontSize: 10, color: DARK_BG + 'AA' },
+  exportBtnSmall:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: CARD_BG2, borderRadius: 12, paddingVertical: 11, borderWidth: 1, borderColor: GOLD + '40' },
+  exportBtnSmallTxt:{ fontSize: 13, fontWeight: '700', color: GOLD },
   mapaHeader:      { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', backgroundColor: DARK_BG + 'EE', paddingTop: 50, paddingHorizontal: 16, paddingBottom: 14, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
   mapaBackBtn:     { width: 40, height: 40, borderRadius: 20, backgroundColor: GOLD, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   mapaShareBtn:    { width: 40, height: 40, borderRadius: 20, backgroundColor: GOLD, justifyContent: 'center', alignItems: 'center' },
@@ -861,7 +1132,6 @@ const ds = StyleSheet.create({
   exportBtnTxt:    { fontSize: 15, fontWeight: 'bold', color: DARK_BG, letterSpacing: 0.8 },
 });
 
-// ── ESTILOS DO MODAL EXPORTAR ────────────────────────────────
 const me = StyleSheet.create({
   overlay:   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end', zIndex: 999 },
   sheet:     { backgroundColor: CARD_BG, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingBottom: 36, paddingTop: 12, borderWidth: 1, borderColor: GOLD + '25' },
