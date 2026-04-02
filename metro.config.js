@@ -1,11 +1,26 @@
+// metro.config.js
 const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
-// Adiciona suporte para arquivos .cjs
-config.resolver.sourceExts.push('cjs');
+config.resolver.assetExts.push(
+  'db',
+  'mp3',
+  'ttf',
+  'obj',
+  'mtl',
+  'png',
+  'jpg',
+  'jpeg'
+);
 
-// Desabilita uma funcionalidade experimental que causa o problema
-config.resolver.unstable_enablePackageExports = false;
+config.resolver.sourceExts.push(
+  'jsx',
+  'js',
+  'ts',
+  'tsx',
+  'json',
+  'cjs'
+);
 
 module.exports = config;

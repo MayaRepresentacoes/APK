@@ -1,0 +1,67 @@
+// src/config/env.ts
+import {
+  GOOGLE_MAPS_API_KEY,
+  GOOGLE_MAPS_ANDROID_API_KEY,
+  GOOGLE_MAPS_IOS_API_KEY,
+  GOOGLE_MAPS_WEB_API_KEY,
+  APP_NAME,
+  APP_PRIMARY_COLOR,
+  APP_SCHEME,
+  APP_VERSION,
+  FIREBASE_API_KEY,
+  FIREBASE_AUTH_DOMAIN,
+  FIREBASE_PROJECT_ID,
+  FIREBASE_STORAGE_BUCKET,
+  FIREBASE_MESSAGING_SENDER_ID,
+  FIREBASE_APP_ID
+} from '@env';
+
+import { Platform } from 'react-native';
+
+export const ENV = {
+  // Google Maps
+  GOOGLE_MAPS_API_KEY: GOOGLE_MAPS_API_KEY || '',
+  GOOGLE_MAPS_ANDROID_API_KEY: GOOGLE_MAPS_ANDROID_API_KEY || GOOGLE_MAPS_API_KEY || '',
+  GOOGLE_MAPS_IOS_API_KEY: GOOGLE_MAPS_IOS_API_KEY || GOOGLE_MAPS_API_KEY || '',
+  GOOGLE_MAPS_WEB_API_KEY: GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_API_KEY || '',
+  
+  // App
+  APP_NAME: APP_NAME || 'MAYA Representações',
+  APP_PRIMARY_COLOR: APP_PRIMARY_COLOR || '#001E2E',
+  APP_SCHEME: APP_SCHEME || 'maya',
+  APP_VERSION: APP_VERSION || '1.0.0',
+  
+  // Firebase
+  FIREBASE_API_KEY: FIREBASE_API_KEY || '',
+  FIREBASE_AUTH_DOMAIN: FIREBASE_AUTH_DOMAIN || '',
+  FIREBASE_PROJECT_ID: FIREBASE_PROJECT_ID || '',
+  FIREBASE_STORAGE_BUCKET: FIREBASE_STORAGE_BUCKET || '',
+  FIREBASE_MESSAGING_SENDER_ID: FIREBASE_MESSAGING_SENDER_ID || '',
+  FIREBASE_APP_ID: FIREBASE_APP_ID || '',
+  
+  // Platform specific
+  getGoogleMapsApiKey: (): string => {
+    switch (Platform.OS) {
+      case 'ios':
+        return ENV.GOOGLE_MAPS_IOS_API_KEY;
+      case 'android':
+        return ENV.GOOGLE_MAPS_ANDROID_API_KEY;
+      case 'web':
+        return ENV.GOOGLE_MAPS_WEB_API_KEY;
+      default:
+        return ENV.GOOGLE_MAPS_API_KEY;
+    }
+  },
+  
+  // Firebase config object
+  getFirebaseConfig: () => ({
+    apiKey: ENV.FIREBASE_API_KEY,
+    authDomain: ENV.FIREBASE_AUTH_DOMAIN,
+    projectId: ENV.FIREBASE_PROJECT_ID,
+    storageBucket: ENV.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: ENV.FIREBASE_MESSAGING_SENDER_ID,
+    appId: ENV.FIREBASE_APP_ID
+  })
+};
+
+export default ENV;

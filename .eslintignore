@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+*.config.js
+*.config.ts
+babel.config.js
+metro.config.js
+jest.config.js
+.eslintrc.js
+.env
+.env.*
+coverage/
+lib/
+build/

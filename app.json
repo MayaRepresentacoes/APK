@@ -6,11 +6,42 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+
     "splash": {
-      "image": "./assets/images/inicial.png",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#001E2E"
     },
+
+    "scheme": "maya",
+    "assetBundlePatterns": ["**/*"],
+
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.maya.representacoes",
+      "buildNumber": "1.0.0",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "O MAYA precisa da sua localização para registrar check-ins e exibir sua posição no mapa.",
+        "NSLocationAlwaysUsageDescription": "O MAYA usa a localização para registrar visitas automaticamente.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "O MAYA precisa da sua localização para registrar check-ins e exibir clientes no mapa.",
+        "NSCameraUsageDescription": "O MAYA precisa da câmera para fotografar estoque, gôndola e obras dos clientes.",
+        "NSPhotoLibraryUsageDescription": "O MAYA precisa acessar sua galeria para anexar fotos às visitas.",
+        "NSPhotoLibraryAddUsageDescription": "O MAYA salva fotos das visitas na sua galeria.",
+        "NSMicrophoneUsageDescription": "Necessário para gravação de vídeos (funcionalidade futura).",
+        "LSApplicationQueriesSchemes": [
+          "waze",
+          "comgooglemaps",
+          "maps",
+          "googlechromes",
+          "googlemaps"
+        ]
+      },
+      "config": {
+        "googleMapsApiKey": "SUA_GOOGLE_MAPS_API_KEY_AQUI"
+      },
+      "backgroundColor": "#001E2E"
+    },
+
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -18,40 +49,53 @@
       },
       "package": "com.maya.representacoes",
       "versionCode": 1,
+      "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "CAMERA",
-        "READ_MEDIA_IMAGES"
-      ]
-    },
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.maya.representacoes",
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Necessário para capturar localização dos clientes.",
-        "NSLocationAlwaysUsageDescription": "Necessário para rastrear rota durante visitas.",
-        "NSCameraUsageDescription": "Necessário para fotografar clientes.",
-        "NSPhotoLibraryUsageDescription": "Necessário para selecionar foto dos clientes."
-      }
-    },
-    "backgroundColor": "#001E2E",
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "SUA_GOOGLE_MAPS_API_KEY_AQUI"
+        }
+      },
       "backgroundColor": "#001E2E"
     },
+
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+
     "plugins": [
       [
-        "expo-splash-screen",
+        "expo-location",
         {
-          "image": "./assets/images/inicial.png",
-          "resizeMode": "contain",
-          "backgroundColor": "#001E2E"
+          "locationAlwaysAndWhenInUsePermission": "O MAYA precisa da sua localização para registrar check-ins e exibir clientes no mapa.",
+          "locationAlwaysPermission": "Permita que o MAYA acesse sua localização para registrar visitas automaticamente.",
+          "locationWhenInUsePermission": "O MAYA usa a localização ao registrar check-ins e ao visualizar o mapa de clientes.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O MAYA acessa suas fotos para anexar imagens às visitas.",
+          "cameraPermission": "O MAYA usa a câmera para fotografar o estoque e produtos dos clientes.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-font",
       [
         "expo-build-properties",
         {
@@ -60,28 +104,43 @@
             "targetSdkVersion": 36,
             "buildToolsVersion": "36.0.0",
             "minSdkVersion": 24
+          },
+          "ios": {
+            "deploymentTarget": "15.1"
           }
         }
       ],
-      [
-        "expo-location",
-        {
-          "locationAlwaysAndWhenInUsePermission": "Necessário para capturar localização dos clientes."
-        }
-      ],
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Necessário para selecionar fotos dos clientes.",
-          "cameraPermission": "Necessário para fotografar clientes."
-        }
-      ],
-      "expo-font"
+      "expo-sharing",
+      "expo-secure-store"
     ],
+
     "extra": {
       "eas": {
         "projectId": "cd308284-0e0c-42c2-8109-56d1f08fa4a2"
       }
-    }
+    },
+
+    "owner": "maya-representacoes",
+    "runtimeVersion": "1.0.0",
+
+    "updates": {
+      "url": "https://u.expo.dev/cd308284-0e0c-42c2-8109-56d1f08fa4a2",
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    },
+
+    "backgroundColor": "#001E2E",
+    "primaryColor": "#001E2E",
+
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#001E2E",
+      "iosDisplayInForeground": true,
+      "androidMode": "default",
+      "androidCollapsedTitle": "MAYA Representações"
+    },
+
+    "platforms": ["ios", "android", "web"]
   }
 }
